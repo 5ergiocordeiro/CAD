@@ -28,11 +28,13 @@ Códigos de retorno:
 7: Erro na alocação de memória.
 8: Matriz/sistema singular.
 9: Matriz larga demais.
+10: Erro retornado pela biblioteca LAPACK/LAPACKE.
 
 Observações:
 1) Compilado e testado com MinGW 4.8.2.
 2) Utiliza aritmética com precisão estendida (80 bits). Compilar com a opção -D__USE_MINGW_ANSI_STDIO.
 3) Utiliza a biblioteca openblas 2.15.
+4) Utiliza a biblioteca lapack 3.6.0. Compilar com as opções -D__USE_MINGW_ANSI_STDIO e -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_CPP e linkar com compilador Fortran (gfortran).
 
 */
 
@@ -332,7 +334,6 @@ void execprob6(int size) {
 		}
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	// Cria versões em diversas precisões
 	float * pBf = fmcopy(pBd, nrowB, ncolB);
 	// Multiplica as matrizes
 	float * pCf = fgemm(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
@@ -354,10 +355,8 @@ void execprob7(int size) {
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	// Resolve o sistema
-	debuglevel_ = 2;
 	float * pCf = fsolveLS(pAf, nrowA, 1);
 	// Calcula e relata a norma 2 dos resultados
-	debuglevel_ = 0;
 	calcn2(pCf, NULL, NULL, nrowA, 1);
 	return;
 	}
@@ -372,14 +371,10 @@ float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 	cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nrowA, ncolB, ncolA, 1, pA, ncolA, pB, ncolB, 0, pC, ncolB);
 	return pC;
 	}
-	
+
+// Wrappers para funções da biblioteca LAPACKE
 float * fsolveLS(float * psys, int rank, int nrhs) {
 	extern int debuglevel_;
-	float * pC = (float *) malloc(rank * nrhs * sizeof(float));
-	if (pC == NULL) {
-		printf("Não conseguiu alocar memória para o resultado %d x %d! \n", rank, nrhs);
-		exit(7);
-		}
 	float * pA = (float *) malloc(rank * rank * sizeof(float));
 	if (pA == NULL) {
 		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank);
@@ -403,14 +398,16 @@ float * fsolveLS(float * psys, int rank, int nrhs) {
 		fshowmat(pA, rank, rank, "A");
 		fshowmat(pB, rank, nrhs, "B");
 		}
-	lapack_int retcode = LAPACKE_sgels(LAPACK_ROW_MAJOR, 'N', rank, rank + nrhs, nrhs, pA, rank, pB, nrhs);
+	lapack_int retcode = LAPACKE_sgels(LAPACK_ROW_MAJOR, 'N', rank, rank, nrhs, pA, rank, pB, nrhs);
 	if (retcode != 0) {
 		printf("Função LAPACKE_sgels retornou erro no argumento %d", -retcode);
-		exit(8);
+		exit(10);
+		}
+	if (debuglevel_ == 2) {
+		fshowmat(pA, rank, nrhs, "X");
 		}
 	free(pA);
-	free(pB);
-	return pC;
+	return pB;
 	}
 	
 // Funções para cópia das matrizes em diversas precisões	
