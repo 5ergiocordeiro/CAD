@@ -14,8 +14,9 @@ n = 2: Lê dois sistemas triangulares gerados pelo MATLAB, resolve-os e calcula 
 n = 3: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de eliminação de Gauss e calcula o determinante e a norma 2 do resultado em diversas precisões.
 n = 4: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de susbtituição LU e calcula o determinante e a norma 2 do resultado.
 n = 5: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de susbtituição de Cholesky e calcula o determinante e a norma 2 do resultado.
-n = 6: Lê duas matrizes geradas pelo MATLAB e calcula o produto através de rotinas da biblioteca openblas, bem como a norma 2 do mesmo.
+n = 6: Lê duas matrizes geradas pelo MATLAB e calcula o produto através de diversas rotinas, comparando o desempenho.
 n = 7: Lê um sistema gerado pelo MATLAB, resolve-o através da bioblioteca LAPACK e calcula a norma 2 do resultado.
+n = 8: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de diagonalização e calcula o determinante e a norma 2 do resultado.
 
 Códigos de retorno:
 0: Execução bem-sucedida.
@@ -32,30 +33,38 @@ Códigos de retorno:
 
 Observações:
 1) Compilado e testado com MinGW 4.8.2.
-2) Utiliza aritmética com precisão estendida (80 bits). Compilar com a opção -D__USE_MINGW_ANSI_STDIO.
-3) Utiliza a biblioteca openblas 2.15.
-4) Utiliza a biblioteca lapack 3.6.0. Compilar com as opções -D__USE_MINGW_ANSI_STDIO e -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_CPP e linkar com compilador Fortran (gfortran).
-
+2) Utiliza a biblioteca OpenBlas 2.15.
+3) Utiliza a biblioteca LAPACK 3.6.0. Compilar com as opções -D__USE_MINGW_ANSI_STDIO e -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_CPP e linkar com compilador Fortran (gfortran).
 */
 
+#define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <omp.h>
+#include <sys/time.h>
+#include <windows.h>
+#include <time.h>
 #include "cblas.h"
+
+#define HAVE_LAPACK_CONFIG_H 1
+#define LAPACK_COMPLEX_CPP 1
 #include "lapacke.h"
 
-#define bufsize 10000			// para leitura dos dados em arquivo
+#define bufsize 10000				// para leitura dos dados em arquivo
 #define FNAME_MAX_SIZE 255
-#define POSROWNBR 7				// posição do número de linhas no arquivo
-#define POSCOLNBR 10			// posição do número de colunas no arquivo
-#define FLOPS_SQRT	15			// https://folding.stanford.edu/home/faq/faq-flops/
+#define POSROWNBR 7					// posição do número de linhas no arquivo
+#define POSCOLNBR 10				// posição do número de colunas no arquivo
+#define FLOPS_SQRT	15				// https://folding.stanford.edu/home/faq/faq-flops/
 
-void *__gxx_personality_v0;
-typedef void f_exec(int);
+void *__gxx_personality_v0;			// desabilita tratamento de exceção
 
+typedef void f_exec(int);			// função a ser despachada
+
+// Protótipos de funções
 void calcn2(float * fmat, double * dmat, long double * ldmat, int nrows, int ncols);
 void dchangerows(double * pmat, int rows, int ncols, int row1, int row2);
 int dfindmax(double * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
@@ -72,10 +81,13 @@ void execprob4(int size);
 void execprob5(int size);
 void execprob6(int size);
 void execprob7(int size);
+void execprob8(int size);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
+float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
+bool fisddom(float * pmat, int nrows, int ncols);
 float * fmcopy(double * psrc, int nrows, int ncols);
 float * fmmult(float * pA, int nrowA, int ncolA, float * pBf, int nrowB, int ncolB);
 float fmnorm2(float * pmat, int nrow, int ncol);
@@ -83,11 +95,14 @@ float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior);
 int fparseLU(float * pmat, float ** ppL, float ** ppU, float * values,int rank);
 void fshowmat(float * pmat, int nrows, int ncols, const char * header);
 float * fsolveChol(float * psrc, int rank, float * pdet);
+float * fsolveDG(float * psrc, int rank, float * pdet);
 float * fsolveG(float * psrc, int rank, float * pdet);
 float * fsolveLS(float * psys, int rank, int nrhs);
 float * fsolveLU(float * psrc, int rank, float * pdet);
+float ftrace(float * pmat, int nrows, int ncols);
 float * ftranspose(float * psrc, int nrows, int ncols);
 float * f2Chol(float * psrc, int rank, float * pdet);
+float * f2diag(float * psrc, int rank, float * pdet);
 float * f2LU(float * psrc, int rank, float * pdet);
 float * f2sys(float * psrc, float * pval, int rank);
 float * f2tri(float * psrc, int rank, float * pdet);
@@ -102,10 +117,12 @@ long double * ldsolveG(long double * psrc, int rank, long double * pdet);
 long double * ld2tri(long double * psrc, int rank, long double * pdet);
 double * lermat(const char * fname, int size, int * nrows, int * ncolA);
 int main(int argc, const char * argv[]);
+void ucrono(bool init, int divisor);
 void valargs(int argc, const char * argv[], int * pprobnbr, int * psize);
 
 
 static int debuglevel_ = 0, flops_ = 0;
+
 
 int main(int argc, const char * argv[]) {
 // Executa o problema de acordo com os argumentos passados.
@@ -119,7 +136,7 @@ int main(int argc, const char * argv[]) {
 	static f_exec * fn[] = {
 		& execprob1, & execprob2, & execprob3, 
 		& execprob4, & execprob5, & execprob6,
-		& execprob7
+		& execprob7, & execprob8
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -155,7 +172,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 7) {
+	if (probnbr < 1 || probnbr > 8) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -168,6 +185,8 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 	return;
 	}
 
+
+// Funções despachadas
 void execprob1(int size) {
 // Executa o problema número 2 com o tamanho 'size' indicado.
 	// Lê as matrizes de entrada
@@ -322,7 +341,7 @@ void execprob5(int size) {
 	}
 
 void execprob6(int size) {
-// Executa o problema número '6' com o tamanho 'size' indicado.
+// Executa o problema número '6' com o tamanho 'size' indicado
 	// Lê as matrizes de entrada
 	int nrowA, ncolA, nrowB, ncolB;
 	double * pAd = lermat("MatA", size, & nrowA, & ncolA);
@@ -335,8 +354,26 @@ void execprob6(int size) {
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	float * pBf = fmcopy(pBd, nrowB, ncolB);
-	// Multiplica as matrizes
-	float * pCf = fgemm(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+	// Multiplica as matrizes por meio de rotinas diversas e compara o desempenho
+	ucrono(true, 0);
+	float * pCf = fmmult(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+	ucrono(false, 1);
+	// Calcula e relata a norma 2 dos resultados
+	calcn2(pCf, NULL, NULL, nrowA, ncolB);
+	ucrono(false, 0);
+	for (int i = 0; i < 100; ++ i) {
+		free(pCf);
+		pCf = fgemm(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+		}
+	ucrono(false, 100);
+	// Calcula e relata a norma 2 dos resultados
+	calcn2(pCf, NULL, NULL, nrowA, ncolB);
+	ucrono(false, 0);
+	for (int i = 0; i < 100; ++ i) {
+		free(pCf);
+		pCf = fgemmref(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+		}
+	ucrono(false, 100);
 	// Calcula e relata a norma 2 dos resultados
 	calcn2(pCf, NULL, NULL, nrowA, ncolB);
 	return;
@@ -361,7 +398,32 @@ void execprob7(int size) {
 	return;
 	}
 
-	// Wrappers para funções da biblioteca BLAS	
+void execprob8(int size) {
+// Executa o problema número '8' com o tamanho 'size' indicado.
+	// Lê o sistema de entrada
+	extern int flops_;
+	int nrowA, ncolA;
+	double * pAd = lermat("S", size, & nrowA, & ncolA);
+	// Verifica se pode ser resolvido
+	if (ncolA != nrowA + 1) {
+		printf("O sistema não podem ser resolvido, porque as dimensões são incompatíveis: (%d x %d)! \n", nrowA, ncolA);
+		exit(5);
+		}
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Resolve o sistema e relata o valor do determinante e o esforço computacional necessário para solução
+	float fdet;
+	flops_ = 0;
+	float * pCf = fsolveDG(pAf, nrowA, & fdet);
+	printf("Número de operações necessário para resolver o sistema: %d. \n", flops_);	
+	flops_ = 0;
+	printf("Determinante da matriz: 32 bits = %f \n", fdet);
+	// Calcula e relata a norma 2 dos resultados
+	calcn2(pCf, NULL, NULL, nrowA, 1);
+	return;
+	}
+
+// Wrappers para funções da biblioteca Openblas
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB) {
 	float * pC = (float *) malloc(nrowA * ncolB * sizeof(float));
 	if (pC == NULL) {
@@ -372,6 +434,29 @@ float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 	return pC;
 	}
 
+
+// Wrappers para funções da biblioteca de referência (em Fortran)
+extern"C" { void sgemm_(char *, char *, int *, int *, int *, float *, float *, int *, float *, int *, float *, float *, int *); }
+float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB) {
+	extern int debuglevel_;	
+	float * pC = (float *) malloc(nrowA * ncolB * sizeof(float));
+	if (pC == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nrowA, ncolB);
+		exit(7);
+		}
+	char modea, modeb;
+	modeb = modea = 'T';
+	int m = nrowA, n = ncolB, k = ncolA, lda = ncolA, ldb = ncolB, ldc = ncolB;
+	float alpha = 1, beta = 0;
+	if (debuglevel_ == 2) {
+		fshowmat(pA, nrowA, ncolA, "A");
+		fshowmat(pB, nrowA, ncolB, "B");
+		}
+	sgemm_(&modea, &modeb, &m, &n, &k, &alpha, pA, &lda, pB, &ldb, &beta, pC, &ldc);
+	return pC;
+	}
+
+	
 // Wrappers para funções da biblioteca LAPACKE
 float * fsolveLS(float * psys, int rank, int nrhs) {
 	extern int debuglevel_;
@@ -1343,6 +1428,145 @@ void ldshowmat(long double * pmat, int nrows, int ncols, const char * header) {
 		}
 	}
 	
+
+// Outras funções úteis
+void ucrono(bool init, int divisor) {
+// Marca os tempos transcorridos entre chamadas
+	static double wstart, wend;
+    static HANDLE hProcess;
+    static FILETIME ftCreation, ftExit, ftKernel, ftUser1, ftUser2;
+    static SYSTEMTIME stUser1,stUser2;
+	if (init) {
+		// Inicializa as variáveis
+		hProcess = GetCurrentProcess();
+		}
+	if (divisor == 0) {
+		// Começa a contagem
+		GetProcessTimes(hProcess, &ftCreation, &ftExit, &ftKernel, &ftUser1);
+		wstart = omp_get_wtime();
+		}
+	else {
+		// Encerra a contagem e imprime o resultado
+		GetProcessTimes(hProcess, &ftCreation, &ftExit, &ftKernel, &ftUser2);	
+		wend = omp_get_wtime();
+		FileTimeToSystemTime(& ftUser1, & stUser1);
+		FileTimeToSystemTime(& ftUser2, & stUser2);
+		double twall = (1000.0 * (wend - wstart)) / divisor;
+		double tuser = (1000.0 * (stUser2.wSecond - stUser1.wSecond) + stUser2.wMilliseconds - stUser1.wMilliseconds) / divisor;
+		printf("Tempo gasto = %f ms, user time = %f ms \n", twall, tuser);
+		}
+	return;
+	}
+
+float ftrace(float * pmat, int nrows, int ncols) {
+// Retorna o traço da matriz 'pmat'.
+	float sum = 0;
+	for (int i = 0; i < nrows; ++ i) {
+		sum += pmat[i * (ncols + 1)];
+		}
+	return sum;
+	}
+	
+bool fisddom(float * pmat, int nrows, int ncols) {
+// Verifica se a matriz 'pmat' é diagonalmente dominante.
+	for (int i = 0; i < nrows; ++ i) {
+		float sum = 0, ref = pmat[i * (ncols + 1)];
+		for (int j = 0; j < nrows; ++ j) {
+			if (j != i) {
+				sum += pmat[i * ncols + j];
+				if (sum >= ref) {
+					return false;
+					}
+				}
+			}
+		}
+	return true;
+	}
+
+float * f2diag(float * psrc, int rank, float * pdet) {
+// Diagonaliza um sistema por meio da Eliminação Gaussiana com pivotação e informa o valor do determinante, em precisão simples.
+	extern int debuglevel_;
+	int ncols = rank + 1;
+	float * pval = (float *) calloc(rank * ncols, sizeof(float));
+	if (pval == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, ncols);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		for (int j = 0; j <= rank; ++ j) {
+			pval[i * ncols + j] = psrc[i * (rank + 1) + j];
+			}
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pval, rank, ncols, "Inicialização");
+		}
+	bool sinal = false;
+	float det = 1, maxval;
+	for (int j = 0; j < rank; ++ j) {
+		int maxrow = ffindmax(pval, rank, ncols, j, true, j);
+		maxval = pval[maxrow * ncols + j];
+		if (maxval == 0) {
+			printf("Matriz singular! \n");
+			exit(8);
+			}
+		if (j != maxrow) {
+			sinal = ! sinal;
+			fchangerows(pval, rank, ncols, j, maxrow);
+			if (debuglevel_ >= 2) {
+				printf("Coluna %d pivoteamento\n", j);
+				fshowmat(pval, rank, ncols, "");
+				}
+			}
+		for (int i = j + 1; i < rank; ++ i) {
+			double multiplier = pval[i * ncols + j] / maxval;
+			++ flops_;			
+			pval[i * ncols + j] = 0;
+			for (int k = j + 1; k <= rank; ++ k) {
+				pval[i * ncols + k] -= pval[j * ncols + k] * multiplier;
+				flops_ += 2;				
+				}
+			}
+		for (int i = j - 1; i >= 0; -- i) {
+			double multiplier = pval[i * ncols + j] / maxval;
+			++ flops_;			
+			pval[i * ncols + j] = 0;
+			for (int k = j + 1; k <= rank; ++ k) {
+				pval[i * ncols + k] -= pval[j * ncols + k] * multiplier;
+				flops_ += 2;				
+				}
+			}
+		if (debuglevel_ >= 2) {
+			printf("Coluna %d eliminação. Pivô = %f\n", j, maxval);
+			fshowmat(pval, rank, ncols, "");
+			}
+		}
+	for (int i = 0; i < rank; ++ i) {
+		det *= pval[i * ncols + i];
+		++ flops_;		
+		}
+	* pdet = det * (sinal ? -1 : 1);
+	return pval;
+	}
+
+float * fsolveDG(float * psrc, int rank, float * pdet) {
+// Retorna a solução do sistema por diagonalização e informa o valor do determinante, em precisão simples.
+	extern int debuglevel_, flops_;
+	float * pD = f2diag(psrc, rank, pdet);
+	float * result = (float *) malloc(rank * sizeof(float));
+	if (result == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", rank);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		result[i] = pD[i * (rank + 1) + rank] / pD[i * (rank +1) + i];
+		++ flops_;
+		}		
+	if (debuglevel_ >= 2) {
+		fshowmat(result, rank, 1, "Resultado");
+		}
+	return result;
+	}
+
 // Funções para leitura das matrizes gravadas pelo MATLAB	
 double fgetval(char ** pbuffer) {
 // Extrai o primeiro valor existente no "buffer"
