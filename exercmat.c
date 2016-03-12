@@ -1,10 +1,11 @@
 /*
 exercmat.c
 Uso:
-	exercmat n m [l]
+	exercmat n m [e] [l]
 onde
 	n é o número do problema
 	m é o tamanho do problema
+	[e] (opcional) é o módulo do erro admitido
 	l (opcional) é o nível de debug a ser usado
 Valores de n:
 1 <= n <= 3: Problemas normais.
@@ -17,6 +18,7 @@ n = 5: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de susbtituiç�
 n = 6: Lê duas matrizes geradas pelo MATLAB e calcula o produto através de diversas rotinas, comparando o desempenho.
 n = 7: Lê um sistema gerado pelo MATLAB, resolve-o através da bioblioteca LAPACK e calcula a norma 2 do resultado.
 n = 8: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de diagonalização e calcula o determinante e a norma 2 do resultado.
+n = 9: Lê um sistema gerado pelo MATLAB, resolve-o pelo método do cálculo da matriz inversa por eliminação de Gauss e calcula o determinante e a norma 2 do resultado.
 
 Códigos de retorno:
 0: Execução bem-sucedida.
@@ -35,6 +37,10 @@ Observações:
 1) Compilado e testado com MinGW 4.8.2.
 2) Utiliza a biblioteca OpenBlas 2.15.
 3) Utiliza a biblioteca LAPACK 3.6.0. Compilar com as opções -D__USE_MINGW_ANSI_STDIO e -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_CPP e linkar com compilador Fortran (gfortran).
+
+TO DO:
+1) Verificar liberação de memória alocada
+
 */
 
 #define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
@@ -59,6 +65,8 @@ Observações:
 #define POSROWNBR 7					// posição do número de linhas no arquivo
 #define POSCOLNBR 10				// posição do número de colunas no arquivo
 #define FLOPS_SQRT	15				// https://folding.stanford.edu/home/faq/faq-flops/
+#define DEBUGLEVEL_DEF	0			// nível de debug default
+#define MAXERR_DEF	1e-6			// valor de erro máximo default
 
 void *__gxx_personality_v0;			// desabilita tratamento de exceção
 
@@ -82,11 +90,13 @@ void execprob5(int size);
 void execprob6(int size);
 void execprob7(int size);
 void execprob8(int size);
+void execprob9(int size);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
+float * finvG(float * pmat, int rank, int ncols, float * pdet);
 bool fisddom(float * pmat, int nrows, int ncols);
 float * fmcopy(double * psrc, int nrows, int ncols);
 float * fmmult(float * pA, int nrowA, int ncolA, float * pBf, int nrowB, int ncolB);
@@ -105,7 +115,7 @@ float * f2Chol(float * psrc, int rank, float * pdet);
 float * f2diag(float * psrc, int rank, float * pdet);
 float * f2LU(float * psrc, int rank, float * pdet);
 float * f2sys(float * psrc, float * pval, int rank);
-float * f2tri(float * psrc, int rank, float * pdet);
+float * f2tri(float * psrc, int rank, int ncols, float * pdet);
 void ldchangerows(long double * pmat, int rows, int ncols, int row1, int row2);
 int ldfindmax(long double * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 long double * ldmcopy(double * psrc, int nrows, int ncols);
@@ -121,8 +131,8 @@ void ucrono(bool init, int divisor);
 void valargs(int argc, const char * argv[], int * pprobnbr, int * psize);
 
 
-static int debuglevel_ = 0, flops_ = 0;
-
+static int debuglevel_, flops_;
+static float maxerr_;
 
 int main(int argc, const char * argv[]) {
 // Executa o problema de acordo com os argumentos passados.
@@ -136,7 +146,7 @@ int main(int argc, const char * argv[]) {
 	static f_exec * fn[] = {
 		& execprob1, & execprob2, & execprob3, 
 		& execprob4, & execprob5, & execprob6,
-		& execprob7, & execprob8
+		& execprob7, & execprob8, & execprob9, 
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -157,22 +167,33 @@ void calcn2(float * fmat, double * dmat, long double * ldmat, int nrows, int nco
 void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 // Valida os argumentos passados ao programa. Informa o número e o tamanho do problema. Define o nível de debug a ser usado.
 	extern int debuglevel_;
-	if (argc < 3 || argc > 4) {
+	if (argc < 3 || argc > 5) {
 		printf("Número incorreto de argumentos! \n\t Uso: \n\t\t exercmat probnbr size [level] \n");
 		exit(1);
 		}
-	if (argc == 4)  {
-		int level = atoi(argv[3]);
+	if (argc >= 4)  {
+		float error = atof(argv[3]);
+		if (error > 0) {
+			maxerr_ = error;
+			}
+		else {
+			maxerr_ = MAXERR_DEF;
+			printf("Valor de erro máximo inválido. Valor default assumido. \n");
+			}
+		}
+	if (argc == 5)  {
+		int level = atoi(argv[4]);
 		if (level > 0) {
 			debuglevel_ = level;
 			}
 		else {
+			debuglevel_ = DEBUGLEVEL_DEF;
 			printf("Nível de debug inválido. Valor default assumido. \n");
 			}
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 8) {
+	if (probnbr < 1 || probnbr > 9) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -423,6 +444,42 @@ void execprob8(int size) {
 	return;
 	}
 
+void execprob9(int size) {
+// Executa o problema número '9' com o tamanho 'size' indicado.
+	// Lê o sistema de entrada
+	extern int flops_;
+	int nrowA, ncolA;
+	double * pAd = lermat("S", size, & nrowA, & ncolA);
+	// Verifica se pode ser resolvido
+	if (ncolA != nrowA + 1) {
+		printf("O sistema não podem ser resolvido, porque as dimensões são incompatíveis: (%d x %d)! \n", nrowA, ncolA);
+		exit(5);
+		}
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Inverte a matriz e relata o valor do determinante
+	float fdet;
+	flops_ = 0;
+	float * pInv = finvG(pAf, nrowA, ncolA, & fdet);
+	printf("Número de operações necessário para inverter a matriz: %d. \n", flops_);	
+	flops_ = 0;
+	printf("Determinante da matriz: 32 bits = %f \n", fdet);
+	// Obtém a solução
+	float * pvet = (float *) malloc(nrowA * sizeof(float));
+	if (pvet == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", nrowA);
+		exit(7);
+		}
+	for (int i = 0; i < nrowA; ++ i) {
+		pvet[i] = pAf[i * ncolA + nrowA];
+		}
+	float * pCf = fmmult(pInv, nrowA, nrowA, pvet, nrowA, 1);
+	// Calcula e relata a norma 2 dos resultados
+	calcn2(pCf, NULL, NULL, nrowA, 1);
+	return;
+	}
+	
+	
 // Wrappers para funções da biblioteca Openblas
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB) {
 	float * pC = (float *) malloc(nrowA * ncolB * sizeof(float));
@@ -613,34 +670,89 @@ long double * ldmmult(long double * pA, int nrowA, int ncolA, long double * pB, 
 
 // Funções para solução dos sistemas em diversas precisões
 // ... Eliminação Gaussiana com pivotação
+float * finvG(float * pmat, int rank, int ncols, float * pdet) {
+// Retorna a matriz inversa obtida por Eliminação Gaussiana com pivotação e informa o valor do determinante, em precisão simples.
+	extern int debuglevel_;
+	int ncolsSys = 2 * rank;
+	float * pSys = (float *) calloc(rank * ncolsSys, sizeof(float));	
+	if (pSys == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, ncolsSys);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		for (int j = 0; j < rank; ++ j) {
+			pSys[i * ncolsSys + j] = pmat[i * ncols + j];
+			}
+		pSys[i * ncolsSys + rank + i] = 1;
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pmat, rank, ncols, "pmat");
+		fshowmat(pSys, rank, ncolsSys, "pSys");
+		}
+	float * pTS = f2tri(pSys, rank, ncolsSys, pdet);
+	if (debuglevel_ >= 2) {
+		fshowmat(pTS, rank, ncolsSys, "pTS");
+		}
+	free(pSys);
+	pSys = (float *) calloc(rank * (rank + 1), sizeof(float));
+	if (pSys == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank + 1);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		for (int j = 0; j < rank; ++ j) {
+			pSys[i * (rank + 1) + j] = pTS[i * ncolsSys + j];
+			}
+		}
+	float * pInv = (float *) malloc(rank * rank * sizeof(float));
+	if (pInv == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank);
+		exit(7);
+		}
+	debuglevel_ = 2;
+	for (int j = 0; j < rank; ++ j) {
+		for (int i = 0; i < rank; ++ i) {
+			pSys[i * (rank + 1) + rank] = pTS[i * ncolsSys + rank + j];
+			}
+		if (debuglevel_ >= 2) {
+			fshowmat(pSys, rank, rank + 1, "pSys");
+			}
+		float * result = fmtrisolve(pSys, rank, rank + 1, true);
+		if (debuglevel_ >= 2) {
+			fshowmat(result, rank, 1, "Resultado");
+			}
+		for (int i = 0; i < rank; ++ i) {
+			pInv[i * rank  + j] = result[i];
+			}
+		free(result);
+		}
+	debuglevel_ = 0;
+	return pInv;
+	}
+
+
 float * fsolveG(float * psrc, int rank, float * pdet) {
 // Retorna a solução do sistema por Eliminação Gaussiana com pivotação e informa o valor do determinante, em precisão simples.
 	extern int debuglevel_;
-	float * pTS = f2tri(psrc, rank, pdet);
-	float * result = (float *) malloc(rank * sizeof(float));
-	if (result == NULL) {
-		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", rank);
-		exit(7);
-		}
-	result = fmtrisolve(pTS, rank, rank + 1, true);
+	float * pTS = f2tri(psrc, rank, rank + 1, pdet);
+	float * result = fmtrisolve(pTS, rank, rank + 1, true);
 	if (debuglevel_ >= 2) {
 		fshowmat(result, rank, 1, "Resultado");
 		}
 	return result;
 	}
 
-float * f2tri(float * psrc, int rank, float * pdet) {
+float * f2tri(float * psrc, int rank, int ncols, float * pdet) {
 // Retorna o resultado da Eliminação Gaussiana com pivotação e informa o valor do determinante, em precisão simples.
 	extern int debuglevel_;
-	int ncols = rank + 1;
 	float * pval = (float *) calloc(rank * ncols, sizeof(float));
 	if (pval == NULL) {
 		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, ncols);
 		exit(7);
 		}
 	for (int i = 0; i < rank; ++ i) {
-		for (int j = 0; j <= rank; ++ j) {
-			pval[i * ncols + j] = psrc[i * (rank + 1) + j];
+		for (int j = 0; j < ncols; ++ j) {
+			pval[i * ncols + j] = psrc[i * ncols + j];
 			}
 		}
 	if (debuglevel_ >= 2) {
@@ -667,7 +779,7 @@ float * f2tri(float * psrc, int rank, float * pdet) {
 			double multiplier = pval[i * ncols + j] / maxval;
 			++ flops_;			
 			pval[i * ncols + j] = 0;
-			for (int k = j + 1; k <= rank; ++ k) {
+			for (int k = j + 1; k < ncols; ++ k) {
 				pval[i * ncols + k] -= pval[j * ncols + k] * multiplier;
 				flops_ += 2;				
 				}
@@ -828,7 +940,7 @@ long double * ld2tri(long double * psrc, int rank, long double * pdet) {
 	return pval;
 	}
 
-// ... Substituição LU
+// ... Decomposição LU
 int fparseLU(float * pmat, float ** ppL, float ** ppU, float * values, int rank) {
 // Extrai as componentes L e U da matriz e carrega os valores 'values', em precisão simples.
 	extern int debuglevel_;
@@ -941,7 +1053,7 @@ float * f2LU(float * psrc, int rank, float * pdet) {
 	return pval;
 	}
 
-// ... Substituição de Cholesky
+// ... Decomposição de Cholesky
 float * fsolveChol(float * psrc, int rank, float * pdet) {
 // Retorna a solução do sistema por substituição de Cholesky e informa o valor do determinante, em precisão simples.
 	extern int debuglevel_;
@@ -1028,6 +1140,7 @@ float * f2Chol(float * psrc, int rank, float * pdet) {
 	}
 	
 // ... auxiliares para vários métodos
+
 int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int start) {
 // Retorna o número da linha que possui o maior valor absoluto na posição indicada, em precisão simples.
 	float maxval = 0;
@@ -1170,9 +1283,9 @@ float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior) {
 		}
 	if (superior) {
 		for (int i = nrows - 1; i >= 0; -- i) {
-			float divisor = pmat[i * (ncols + 1)];
+			float divisor = pmat[i * ncols + i];
 			if (divisor == 0) {
-				printf("O sistema é singular! \n");
+				printf("O sistema é singular! %d \n");
 				exit(8);
 				}
 			float sum = 0;
@@ -1185,7 +1298,7 @@ float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior) {
 					printf("Coluna %d: %f = %f * %f \n", j, sum, coef, x);
 					}
 				}
-			float parm = pmat[(i + 1) * ncols - 1];
+			float parm = pmat[i * ncols + nrows];
 			float valor = (parm - sum) / divisor;
 			++ flops_;			
 			result[i] = valor;
@@ -1196,7 +1309,7 @@ float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior) {
 		}
 	else {
 		for (int i = 0; i < nrows; ++ i) {
-			float divisor = pmat[i * (ncols + 1)];
+			float divisor = pmat[i * ncols + i];
 			if (divisor == 0) {
 				printf("O sistema é singular! \n");
 				exit(8);
@@ -1211,7 +1324,7 @@ float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior) {
 					printf("Coluna %d: %f = %f * %f \n", j, sum, coef, x);
 					}
 				}
-			float parm = pmat[(i + 1) * ncols - 1];
+			float parm = pmat[i * ncols + nrows];
 			float valor = (parm - sum) / divisor;
 			++ flops_;
 			result[i] = valor;
@@ -1481,6 +1594,10 @@ bool fisddom(float * pmat, int nrows, int ncols) {
 			}
 		}
 	return true;
+	}
+
+bool issym(float * pmat, int nrows, int ncols) {
+	
 	}
 
 float * f2diag(float * psrc, int rank, float * pdet) {
