@@ -19,7 +19,9 @@ n = 6: Lê duas matrizes geradas pelo MATLAB e calcula o produto através de div
 n = 7: Lê um sistema gerado pelo MATLAB, resolve-o através da bioblioteca LAPACK e calcula a norma 2 do resultado.
 n = 8: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de diagonalização e calcula o determinante e a norma 2 do resultado.
 n = 9: Lê um sistema gerado pelo MATLAB, resolve-o pelo método do cálculo da matriz inversa por eliminação de Gauss e calcula o determinante e a norma 2 do resultado.
-n = 10: Lê um sistema gerado pelo MATLAB e retorna a equação característica da matriz.
+n = 10: Lê um sistema gerado pelo MATLAB e retorna a equação característica da matriz, o determinante e a inversa.
+n = 11: Lê um sistema gerado pelo MATLAB, resolve-o pelo método de eliminação de Gauss, verifica a precisão conforme a tolerância permitida e aplica a correção, se necessário.
+
 
 Códigos de retorno:
 0: Execução bem-sucedida.
@@ -46,7 +48,6 @@ TO DO:
 4) Verificar aumento do esforço com aumento do tamanho:
 	Gauss x Cholesky
 	Leverrier x Leverrier-Faddeev
-5) No método de Leverrier-Faddeev, calcular determinante e inversa.
 */
 
 #define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
@@ -89,11 +90,13 @@ void dshowmat(double * pmat, int nrows, int ncols, const char * header);
 double * dsolveG(double * psrc, int rank, double * pdet);
 double * d2tri(double * psrc, int rank, double * pdet);
 f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
-	execprob6, execprob7, execprob8, execprob9, execprob10;
+	execprob6, execprob7, execprob8, execprob9, execprob10,
+	execprob11;
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 float * feqcaracL(float * pmat, int nrows, int ncols);
-float * feqcaracLF(float * pmat, int nrows, int ncols);
+float * feqcaracLF(float * pmat, int nrows, int ncols, float * pdev = NULL, float ** ppinv = NULL);
 int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
+void ffromsys(float * psys, int nrows, int ncols, float ** ppA, float ** ppB);
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
@@ -103,14 +106,16 @@ bool fisddom(float * pmat, int nrows, int ncols);
 float * fmadd(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB, bool add = true);
 float * fmcopy(double * psrc, int nrows, int ncols);
 float * fmmult(float * pA, int nrowA, int ncolA, float * pBf, int nrowB, int ncolB);
+float fmnormi(float * fmerror, int nrows, int ncols);
 float fmnorm2(float * pmat, int nrow, int ncol);
+float * fmtimes(float * pmat, int nrows, int ncols, float value);
 float * fmtrisolve(float * pmat, int nrows, int ncols, bool superior);
 int fparseLU(float * pmat, float ** ppL, float ** ppU, float * values,int rank);
 float * fpower (float * pmat, int nrows, int ncols);
 void fshowmat(float * pmat, int nrows, int ncols, const char * header);
 float * fsolveChol(float * psrc, int rank, float * pdet);
 float * fsolveDG(float * psrc, int rank, float * pdet);
-float * fsolveG(float * psrc, int rank, float * pdet);
+float * fsolveG(float * psrc, int rank, float * pdet = NULL);
 float * fsolveLS(float * psys, int rank, int nrhs);
 float * fsolveLU(float * psrc, int rank, float * pdet);
 float ftrace(float * pmat, int nrows, int ncols);
@@ -119,7 +124,7 @@ float * f2Chol(float * psrc, int rank, float * pdet);
 float * f2diag(float * psrc, int rank, float * pdet);
 float * f2LU(float * psrc, int rank, float * pdet);
 float * f2sys(float * psrc, float * pval, int rank);
-float * f2tri(float * psrc, int rank, int ncols, float * pdet);
+float * f2tri(float * psrc, int rank, int ncols, float * pdet = NULL);
 void ldchangerows(long double * pmat, int rows, int ncols, int row1, int row2);
 int ldfindmax(long double * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 long double * ldmcopy(double * psrc, int nrows, int ncols);
@@ -151,7 +156,7 @@ int main(int argc, const char * argv[]) {
 		& execprob1, & execprob2, & execprob3, 
 		& execprob4, & execprob5, & execprob6,
 		& execprob7, & execprob8, & execprob9,
-		& execprob10,
+		& execprob10, & execprob11,
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -172,17 +177,18 @@ void calcn2(float * fmat, double * dmat, long double * ldmat, int nrows, int nco
 void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 // Valida os argumentos passados ao programa. Informa o número e o tamanho do problema. Define o nível de debug a ser usado.
 	extern int debuglevel_;
+	extern float maxerr_;
 	if (argc < 3 || argc > 5) {
 		printf("Número incorreto de argumentos! \n\t Uso: \n\t\t exercmat probnbr size [level] \n");
 		exit(1);
 		}
+	maxerr_ = MAXERR_DEF;
 	if (argc >= 4)  {
 		float error = atof(argv[3]);
 		if (error > 0) {
 			maxerr_ = error;
 			}
 		else {
-			maxerr_ = MAXERR_DEF;
 			printf("Valor de erro máximo inválido. Valor default assumido. \n");
 			}
 		}
@@ -198,7 +204,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 10) {
+	if (probnbr < 1 || probnbr > 11) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -499,10 +505,53 @@ void execprob10(int size) {
 	printf("Número de operações necessário para calcular a equação característica da matriz: %d. \n", flops_);	
 	fshowmat(peq, nrowA + 1, 1, "Coeficientes da equação característica da matriz:");
 	free(peq);
+	float fdet, * pinv;
 	flops_ = 0;
-	peq = feqcaracLF(pAf, nrowA, ncolA);
-	printf("Número de operações necessário para calcular a equação característica da matriz: %d. \n", flops_);	
+	peq = feqcaracLF(pAf, nrowA, ncolA, & fdet, & pinv);
+	printf("Número de operações necessário para calcular a equação característica da matriz, determinante e inversa: %d. \n", flops_);	
 	fshowmat(peq, nrowA + 1, 1, "Coeficientes da equação característica da matriz:");
+	printf("Determinante: %f \n", fdet);
+	if (fdet != 0) {
+		fshowmat(pinv, nrowA, nrowA, "Matriz inversa");	
+		}
+	return;
+	}
+
+void execprob11(int size) {
+// Executa o problema número '11' com o tamanho 'size' indicado.
+	// Lê o sistema de entrada
+	extern int flops_;
+	int nrowA, ncolA;
+	double * pAd = lermat("S", size, & nrowA, & ncolA);
+	// Verifica se pode ser resolvido
+	if (ncolA != nrowA + 1) {
+		printf("O sistema não podem ser resolvido, porque as dimensões são incompatíveis: (%d x %d)! \n", nrowA, ncolA);
+		exit(5);
+		}
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	float * pX = fsolveG(pAf, nrowA);
+	printf("Número de operações necessário para resolver o sistema: %d. \n", flops_);	
+	flops_ = 0;
+	do {
+		float * pA, * pB;
+		ffromsys(pAf, nrowA, ncolA, & pA, & pB);
+		float * pAX = fmmult(pA, nrowA, nrowA, pX, nrowA, 1);
+		float * fmerror = fmadd(pB, nrowA, 1, pAX, nrowA, 1, false);
+		free(pAX);
+		float error = fmnormi(fmerror, nrowA, 1);
+		printf("Erro: %f \n", error);
+		if (error <= maxerr_) {
+			break;
+			}
+		float * pval = fmadd(pX, nrowA, 1, fmerror, nrowA, 1, true);
+		free(fmerror);
+		free(pX);
+		pX = pval;
+		} while (true);
+	printf("Número de operações necessário para verificar e refinar a solução: %d. \n", flops_);
+	// Calcula e relata a norma 2 dos resultados
+	calcn2(pX, NULL, NULL, nrowA, 1);
 	return;
 	}
 
@@ -848,7 +897,9 @@ float * f2tri(float * psrc, int rank, int ncols, float * pdet) {
 		det *= pval[i * ncols + i];
 		++ flops_;		
 		}
-	* pdet = det * (sinal ? -1 : 1);
+	if (pdet != NULL) {
+		* pdet = det * (sinal ? -1 : 1);
+		}
 	return pval;
 	}
 
@@ -1576,7 +1627,20 @@ long double * ldmtrisolve(long double * pmat, int nrows, int ncols, bool superio
 	}
 
 	
-// Funções para cálculo da norma 2 das matrizes em diversas precisões
+// Funções para cálculo das normas das matrizes em diversas precisões
+float fmnormi(float * pmat, int nrow, int ncol) {
+	if (pmat == NULL) {
+		return 0;
+		}
+	int size = nrow * ncol;
+	float max = 0;
+	while (size -- > 0) {
+		float valor = * pmat ++;
+		max = (valor > max) ? valor : max;
+		}
+	return max;
+	}
+
 float fmnorm2(float * pmat, int nrow, int ncol) {
 	if (pmat == NULL) {
 		return 0;
@@ -1742,8 +1806,8 @@ float * feqcaracL(float * pmat, int nrows, int ncols) {
 	return coef;
 	}
 
-float * feqcaracLF(float * pmat, int nrows, int ncols) {
-// Retorna os coeficientes do polinômio característico da matriz 'pmat' usando algoritmo de Leverrier-Faddeev
+float * feqcaracLF(float * pmat, int nrows, int ncols, float * pdet, float ** ppinv) {
+// Retorna os coeficientes do polinômio característico da matriz 'pmat' usando algoritmo de Leverrier-Faddeev. Também calcula o determinante e a matriz inversa.
 	extern int flops_;
 	int rank = nrows + 1;
 	float nrows2 = nrows * nrows;
@@ -1762,19 +1826,24 @@ float * feqcaracLF(float * pmat, int nrows, int ncols) {
 			pvals[i * nrows + j] = pmat[i * ncols + j];
 			}
 		}
-	float * plast = pvals;
-	coef[0] = -1;
-	for (int i = 1 ; i < rank ; ++ i) {
+	float * plast = pvals, * pdiff;
+	bool signal = true;
+	coef[0] = -1;	
+	for (int i = 1 ; i < rank; ++ i) {
+		signal = ! signal;
 		if (debuglevel_ >= 3) {
 			printf("Coef. %d: ", i);
 			}
 		if (i > 1) {
 			float * pident = fident(nrows, coef[i - 1]);
-			float * pdiff = fmadd(plast, nrows, nrows, pident, nrows, nrows, false);
+			pdiff = fmadd(plast, nrows, nrows, pident, nrows, nrows, false);
 			free(pident);
 			float * result = fmmult(pvals, nrows, nrows, pdiff, nrows, nrows);
-			free(pdiff);
+			// float * result = fgemm(pvals, nrows, nrows, pdiff, nrows, nrows);
 			// flops_ += pow(nrows, FLOPS_MMULT_EXP);
+			if ((i != rank - 1) || (ppinv == NULL)) {
+				free(pdiff);
+				}
 			if (debuglevel_ >= 2) {
 				printf("A%d \n", i);
 				fshowmat(result, nrows, nrows, "");
@@ -1790,7 +1859,35 @@ float * feqcaracLF(float * pmat, int nrows, int ncols) {
 			}
 		++ flops_;
 		}
+	coef[rank] = plast[0];
+	float fdet;
+	if (pdet != NULL) {
+		fdet = signal ? - coef[rank] : coef[rank];
+		* pdet = fdet;
+		}
+	if ((ppinv != NULL) && (* pdet != 0)) {
+		* ppinv = fmtimes(pdiff, rank, rank, 1/fdet);
+		}
 	return coef;
+	}
+
+void ffromsys(float * psys, int nrows, int ncols, float ** ppA, float ** ppB) {
+	int nrows2 = nrows * nrows;
+	float * pmat = (float *) malloc(nrows2 * sizeof(float));
+	float * pvals = (float *) malloc(nrows * sizeof(float));
+	if (pmat == NULL || pvals == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nrows, nrows + 1);
+		exit(7);
+		}
+	for (int i = 0; i < nrows; ++ i) {
+		for (int j = 0; j < nrows; ++ j) {
+			pmat[i * nrows + j] = psys[i * ncols + j];
+			}
+		pvals[i] = psys[i * ncols + nrows];
+		}
+	* ppA = pmat;
+	* ppB = pvals;
+	return;
 	}
 	
 float * fident(int rank, float val) {
@@ -1849,8 +1946,21 @@ float * fmadd(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 		}
 	return result;
 	}
-
 	
+float * fmtimes(float * pmat, int nrows, int ncols, float value) {
+	int size = nrows * ncols;
+	float * result = (float *) malloc(size * sizeof(float));
+	if (result == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nrows, ncols);
+		exit(7);
+		}
+	for (int i = 0; i < size; ++ i) {
+		result[i] = pmat[i] * value;
+		++ flops_;
+		}
+	return result;
+	}
+
 float * f2diag(float * psrc, int rank, float * pdet) {
 // Diagonaliza um sistema por meio da Eliminação Gaussiana com pivotação e informa o valor do determinante, em precisão simples.
 	extern int debuglevel_;
