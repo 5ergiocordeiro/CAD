@@ -3,13 +3,15 @@
 /*
 exercmat.c
 Uso:
-	exercmat n m [e] [i] [l]
+	exercmat n m [p] [l] [i] [e]
 onde
 	n é o número do problema
 	m é o tamanho do problema
-	e (opcional) é o módulo do erro admitido
-	i (opcional) é o número máximo de iterações admitidas
+	p (opcional) indica se deve ou não ser usado precondicionador
 	l (opcional) é o nível de debug a ser usado
+	i (opcional) é o número máximo de iterações admitidas
+	e (opcional) é o módulo do erro admitido
+
 Valores de n:
 1 <= n <= 3: Problemas normais.
 n > 3: Problemas extras. Nesses casos não se estimou o efeito das diversas precisões; apenas a precisão simples foi empregada.
@@ -28,6 +30,17 @@ n = 12: Lê um sistema gerado pelo MATLAB e o resolve pelo método iterativo de 
 n = 13: Lê um sistema gerado pelo MATLAB e o resolve pelo método de Gauss-Seidel.
 n = 14: Lê uma matriz gerada pelo MATLAB e calcula o maior e o menor autovalor pelo método das potências.
 n = 15: Lê uma matriz gerada pelo MATLAB e calcula todos os seus autovalores pelo método de Jacobi.
+
+Valores de p:
+p = 0: Não usar precondicionador(default)
+p = 1: Usar precondicionador Jacobiano
+
+Valores de l: Inteiro não negativo
+
+Valores de i: Inteiro positivo 
+
+Valores de e: Real positivo
+
 
 Códigos de retorno:
 0: Execução bem-sucedida.
@@ -49,6 +62,7 @@ Observações:
 1) Compilado e testado com MinGW 4.8.2.
 2) Utiliza a biblioteca OpenBlas 2.15.
 3) Utiliza a biblioteca LAPACK 3.6.0. Compilar com as opções -D__USE_MINGW_ANSI_STDIO e -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_CPP e linkar com compilador Fortran (gfortran).
+
 
 TO DO:
 1) Verificar liberação de memória alocada
@@ -120,6 +134,9 @@ bool fissym(float * pmat, int nrows, int ncols);
 f_iter fiterGS, fiterJ, fiterLU;
 int fiterate(int type, f_iter * pfn, float * pA, float * pB, float ** ppX, int * piter, float * perror, float * pL, float * pU, int * pP, int nrows);
 float * fmadd(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB, bool add = true);
+int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter);
+int fmavP(float * pmat, int nrows, int ncols, float * pmax, float * pmin, int * piter);
+int fmmaxavP(float * pmat, int nrows, int ncols, float * pmax, int * piter, bool direto = true);
 float * fmcopy(double * psrc, int nrows, int ncols);
 float * fmmult(float * pA, int nrowA, int ncolA, float * pBf, int nrowB, int ncolB);
 float fmnormi(float * fmerror, int nrows, int ncols);
@@ -158,7 +175,7 @@ void ucrono(bool init, int divisor);
 void valargs(int argc, const char * argv[], int * pprobnbr, int * psize);
 
 
-static int debuglevel_, flops_, maxiter_;
+static int debuglevel_, flops_, maxiter_, prec_;
 static float maxerr_;
 
 int main(int argc, const char * argv[]) {
@@ -197,23 +214,33 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 // Valida os argumentos passados ao programa. Informa o número e o tamanho do problema. Define o nível de debug a ser usado.
 	extern int debuglevel_;
 	extern float maxerr_;
-	if (argc < 3 || argc > 6) {
+	if (argc < 3 || argc > 7) {
 		printf("Número incorreto de argumentos! \n\t Uso: \n\t\t exercmat probnbr size [level] \n");
 		exit(1);
 		}
-	maxerr_ = MAXERR_DEF;
+	prec_ = 0;
 	if (argc >= 4) {
-		float error = atof(argv[3]);
-		if (error > 0) {
-			maxerr_ = error;
+		float prec = atoi(argv[3]);
+		if (prec >= 0 && prec <= 1) {
+			prec_ = prec;
 			}
 		else {
-			printf("Valor de erro máximo inválido. Valor default assumido. \n");
+			printf("Precondicionador inválido. Valor default assumido. \n");
+			}
+		}
+	debuglevel_ = DEBUGLEVEL_DEF;
+	if (argc >= 5) {
+		int level = atoi(argv[4]);
+		if (level > 0) {
+			debuglevel_ = level;
+			}
+		else {
+			printf("Nível de debug inválido. Valor default assumido. \n");
 			}
 		}
 	maxiter_ = MAXITER_DEF;
-	if (argc >= 5) {
-		int niter = atoi(argv[4]);
+	if (argc >= 6) {
+		int niter = atoi(argv[5]);
 		if (niter > 0) {
 			maxiter_ = niter;
 			}
@@ -221,14 +248,14 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 			printf("Número de iterações máximo inválido. Valor default assumido. \n");
 			}
 		}
-	if (argc == 6) {
-		int level = atoi(argv[5]);
-		if (level > 0) {
-			debuglevel_ = level;
+	maxerr_ = MAXERR_DEF;
+	if (argc >= 7) {
+		float error = atof(argv[6]);
+		if (error > 0) {
+			maxerr_ = error;
 			}
 		else {
-			debuglevel_ = DEBUGLEVEL_DEF;
-			printf("Nível de debug inválido. Valor default assumido. \n");
+			printf("Valor de erro máximo inválido. Valor default assumido. \n");
 			}
 		}
 	int probnbr = atoi(argv[1]);
@@ -592,7 +619,7 @@ void execprob12(int size) {
 	// Lê o sistema de entrada
 	extern int flops_;
 	int nrowA, ncolA;
-	double * pAd = lermat("S", size, & nrowA, & ncolA);
+	double * pAd = lermat("D", size, & nrowA, & ncolA);
 	// Verifica se pode ser resolvido
 	if (ncolA != nrowA + 1) {
 		printf("O sistema não podem ser resolvido, porque as dimensões são incompatíveis: (%d x %d)! \n", nrowA, ncolA);
@@ -617,7 +644,7 @@ void execprob13(int size) {
 	// Lê o sistema de entrada
 	extern int flops_;
 	int nrowA, ncolA;
-	double * pAd = lermat("S", size, & nrowA, & ncolA);
+	double * pAd = lermat("D", size, & nrowA, & ncolA);
 	// Verifica se pode ser resolvido
 	if (ncolA != nrowA + 1) {
 		printf("O sistema não podem ser resolvido, porque as dimensões são incompatíveis: (%d x %d)! \n", nrowA, ncolA);
@@ -644,16 +671,15 @@ void execprob14(int size) {
 	extern int flops_;	
 	int nrowA, ncolA, nrowB, ncolB;
 	double * pAd = lermat("MatA", size, & nrowA, & ncolA);
-	double * pBd = lermat("MatB", size, & nrowB, & ncolB );
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	float * pBf = fmcopy(pBd, nrowB, ncolB);
 	// Encontra os autovalores extremos pelo método das potências e relata o esforço computacional necessário
-	float maxav, minav;
+	float maxav, minav = 0;
+	int niter;
 	flops_ = 0;
-	// int retcode = fmavP(pAf, nrowA, ncolA, & maxav , & minav );
-	printf("Número de operações para cálculo dos autovalores extremos: %d. \n", flops_);	
-	flops_ = 0;
+	int retcode = fmavP(pAf, nrowA, ncolA, & maxav , & minav, & niter);
+	printf("Autovalores extremos: %f e %f. \n", minav, maxav);
+	printf("Número de operações para cálculo dos autovalores extremos: %d. Iterações: %d. \n", flops_, niter);	
 	return;
 	}
 
@@ -662,100 +688,155 @@ void execprob15(int size) {
 	// Lê as matrizes de entrada
 	extern int flops_;	
 	int nrowA, ncolA, nrowB, ncolB;
-	double * pAd = lermat("MatA", size, & nrowA, & ncolA);
-	double * pBd = lermat("MatB", size, & nrowB, & ncolB );
+	double * pAd = lermat("C", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	float * pBf = fmcopy(pBd, nrowB, ncolB);
-	// Encontra os autovalores extremos pelo método das potências e relata o esforço computacional necessário
-	float maxav, minav;
+	// Encontra os autovalores extremos pelo método de Jacobi e relata o esforço computacional necessário
+	float * pav;
+	int niter;
 	flops_ = 0;
-	// int retcode = fmavP(pAf, nrowA, ncolA, & maxav , & minav );
-	printf("Número de operações para cálculo dos autovalores extremos: %d. \n", flops_);	
-	flops_ = 0;
+	int retcode = fmavJ(pAf, nrowA, ncolA, & pav , & niter);
+	fshowmat(pav, nrowA, 1, "Autovalores");
+	printf("Número de operações para cálculo dos autovalores extremos: %d. Iterações: %d. \n", flops_, niter);	
 	return;
 	}
 
-// Funções para cálculo de autovalores por métodos iterativos
 	
+// Funções para cálculo de autovalores por métodos iterativos
+int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
+// Calcula os autovalores extremos da matriz pelo método de Jacobi
+	float maxofmaxes = 0;
+	int retcode = 11, niter;
+	for (niter = 0; niter < maxiter_; ++ niter) {
+		for (int i = 0; i < nrows; ++ i) {
+			float max = 0;
+			int pos = -1;
+			for (int j = 0; j < nrows; ++ j) {
+				if (i == j) {
+					continue;
+					}
+				float value = fabs(pmat[i * ncols + j]);
+				if (value > max) {
+					max = value;
+					pos = j;
+					}
+				if (max > maxofmaxes) {
+					maxofmaxes = max;
+					}
+				float aqq_app = pmat[pos * ncols + pos] - pmat[i * ncols + i];
+				float apq = pmat[i * ncols + pos];
+				float phi = 0.5 * aqq_app / apq;
+				float t;
+				if (phi == 0) {
+					t = 1;
+					}
+				else {
+					float root = sqrt(phi * phi + 1);
+					float divisor;
+					if (phi > 0) {
+						divisor = phi + root;
+						}
+					else {
+						divisor = phi - root;
+						}
+					t = 1 / divisor;
+					}
+				float t2 = t * t;
+				float um_mais_t2 = 1 + t2;
+				float cos2phi = 1 / um_mais_t2;
+				float sinphicosphi = t * cos2phi;
+				float cos2phi_sin2phi = (1 - t2) * cos2phi;;
+				float newvalue = - aqq_app * sinphicosphi + apq * cos2phi_sin2phi;
+				pmat[i * ncols + pos] = pmat[pos * ncols + i] = newvalue;
+				}
+			}
+		if (maxofmaxes <= maxerr_) {
+			retcode = 0;
+			break;
+			}
+		}
+	* piter = niter;
+	float * pav = (float *) malloc (nrows * sizeof(float));
+	if (pav == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", nrows);
+		exit(7);
+		}
+	for (int i = 0; i < nrows; ++ i) {
+		pav[i] = pmat[i * ncols + i];
+		}
+	* ppav = pav;
+	return retcode;
+	}
+	
+
+
+int fmavP(float * pmat, int nrows, int ncols, float * pmax, float * pmin, int * piter) {
+// Calcula os autovalores extremos da matriz pelo método das potências
+	int niter1, niter2;
+	int retcode = fmmaxavP(pmat, nrows, ncols, pmax, & niter1, true);
+	retcode = fmmaxavP(pmat, nrows, ncols, pmin, & niter2, false);
+	* piter = niter1 + niter2;
+	return retcode;
+	}
+	
+int fmmaxavP(float * pmat, int nrows, int ncols, float * pmax, int * piter, bool direto) {
+	float * pY = (float *) malloc(nrows * sizeof(float));
+	if (pY == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", nrows);
+		exit(7);
+		}
+	for (int i = 0; i < nrows; ++ i) {
+		pY[i] = 1;
+		}
+	float * pL, * pU;
+	int * pP;
+	if (! direto) {
+		f2LU(pmat, nrows, & pL, & pU, & pP, NULL);
+		}
+	float lastav = - 1e6, lasterror = 1e6, av, * pZ;
+	int retcode = 11, niter;
+	for (niter = 0; niter < maxiter_; ++ niter) {
+		if (direto) {
+			pZ = fmmult(pmat, nrows, ncols, pY, nrows, 1);
+			}
+		else {
+			pZ = fdoLU(pY, pL, pU, pP, nrows);
+			}
+		float alpha = fmnormi(pZ, nrows, 1);
+		float ynorm = fmnormi(pY, nrows, 1);
+		av = alpha / ynorm;
+		float error = fabs((av - lastav) / av);
+		flops_ += 1 + 2 * FLOPS_DIV;
+		if (debuglevel_ >= 1) {
+			printf("Iter. %d: av = %f, error = %f \n", niter, av, error);
+			}
+		if (error <= maxerr_) {
+			retcode = 0;
+			break;
+			}
+		if (error > lasterror) {
+			retcode = 12;
+			break;
+			}
+		lastav = av;
+		lasterror = error;
+		for (int i = 0; i < nrows; ++ i) {
+			pY[i] = pZ[i] / alpha;
+			flops_ += FLOPS_DIV;
+			}
+		free(pZ);
+		}
+	if (retcode == 12) {
+		printf("O método divergiu! \n");
+		}
+	free(pZ);
+	* pmax = direto ? av : (1 / av);
+	flops_ += FLOPS_DIV;
+	* piter = niter;
+	return retcode;
+	}
 
 // Funções para solução de sistemas por métodos iterativos
-int fsolveGS(float * psrc, int rank, float ** ppX, int * piter) {
-// Resolve o sistema de equações pelo método de Gauss-Seidel
-	extern int debuglevel_;
-	int ncols = rank + 1;
-	float * pA = (float *) malloc(rank * rank * sizeof(float));
-	float * pB = (float *) malloc(rank * sizeof(float));
-	float * pX = (float *) malloc(rank * sizeof(float));
-	if (pA == NULL || pB == NULL || pX == NULL) {
-		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank + 2);
-		exit(7);
-		}
-	for (int i = 0; i < rank; ++ i) {
-		for (int j = 0; j < rank; ++ j) {
-			float coef = psrc[i * ncols + j];
-			if (i == j) {
-				if (coef == 0) {
-					printf("A matriz é singular! \n");
-					exit(8);
-					}
-				float value = psrc[i * ncols + rank];
-				pB[i] = value;
-				coef = 1 / coef;
-				pX[i] = value * coef;
-				flops_ += 1 + FLOPS_DIV;
-				}
-			pA[i * rank + j] = coef;
-			}
-		}
-	if (debuglevel_ >= 2) {
-		fshowmat(pA, rank, rank, "A");
-		fshowmat(pB, rank, 1, "B");
-		fshowmat(pX, rank, 1, "X");
-		}
-	int retcode = fiterate(0, & fiterGS, pA, pB, & pX, piter, NULL, NULL, NULL, NULL, rank);
-	* ppX = pX;
-	return retcode;
-	}
-	
-int fsolveJ(float * psrc, int rank, float ** ppX, int * piter) {
-// Resolve o sistema de equações pelo método de Jacobi	
-	extern int debuglevel_;
-	int ncols = rank + 1;
-	float * pA = (float *) malloc(rank * rank * sizeof(float));
-	float * pB = (float *) malloc(rank * sizeof(float));
-	float * pX = (float *) malloc(rank * sizeof(float));
-	if (pA == NULL || pB == NULL || pX == NULL) {
-		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank + 2);
-		exit(7);
-		}
-	for (int i = 0; i < rank; ++ i) {
-		for (int j = 0; j < rank; ++ j) {
-			float coef = psrc[i * ncols + j];
-			if (i == j) {
-				if (coef == 0) {
-					printf("A matriz é singular! \n");
-					exit(8);
-					}
-				float value = psrc[i * ncols + rank];
-				pB[i] = value;
-				coef = 1 / coef; 
-				pX[i] = value * coef;
-				flops_ += 1 + FLOPS_DIV;
-				}
-			pA[i * rank + j] = coef;
-			}
-		}
-	if (debuglevel_ >= 2) {
-		fshowmat(pA, rank, rank, "A");
-		fshowmat(pB, rank, 1, "B");
-		fshowmat(pX, rank, 1, "X");
-		}
-	int retcode = fiterate(0, & fiterJ, pA, pB, & pX, piter, NULL, NULL, NULL, NULL, rank);
-	* ppX = pX;
-	return retcode;
-	}
-
 int fiterGS(float * pA, float * pB, float * pmerror, float * pcorr, float ** ppX, float * pM, float * pC, int * pim, int nrows) {
 	float * pX = * ppX;
 	for (int i = 0; i < nrows; ++ i) {
@@ -795,9 +876,16 @@ int fiterJ(float * pA, float * pB, float * pmerror, float * pcorr, float ** ppX,
 			sum += coef * x;
 			flops_ += 2;
 			}
-		result[i] = (pB[i] - sum) * pA[i * nrows + i];
+		if (prec_ == 0) {
+			result[i] = (pB[i] - sum) * pA[i * nrows + i];
+			flops_ += 2;
+			}
+		if (prec_ == 1) {
+			result[i] = (pB[i] - sum);			
+			++ flops_;
+			}
 		pcorr[i] = result[i] - pX[i];
-		flops_ += 3;
+		++ flops_;
 		}
 	* ppX = result;
 	return 0;
@@ -898,6 +986,100 @@ int fiterate(int type, f_iter * pfn, float * pA, float * pB, float ** ppX, int *
 	if (type == 0) {
 		free(corr);
 		}
+	return retcode;
+	}
+
+int fsolveGS(float * psrc, int rank, float ** ppX, int * piter) {
+// Resolve o sistema de equações pelo método de Gauss-Seidel
+	extern int debuglevel_;
+	int ncols = rank + 1;
+	float * pA = (float *) malloc(rank * rank * sizeof(float));
+	float * pB = (float *) malloc(rank * sizeof(float));
+	float * pX = (float *) malloc(rank * sizeof(float));
+	if (pA == NULL || pB == NULL || pX == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank + 2);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		for (int j = 0; j < rank; ++ j) {
+			float coef = psrc[i * ncols + j];
+			if (i == j) {
+				if (coef == 0) {
+					printf("A matriz é singular! \n");
+					exit(8);
+					}
+				float value = psrc[i * ncols + rank];
+				pB[i] = value;
+				coef = 1 / coef;
+				pX[i] = value * coef;
+				flops_ += 1 + FLOPS_DIV;
+				}
+			pA[i * rank + j] = coef;
+			}
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pA, rank, rank, "A");
+		fshowmat(pB, rank, 1, "B");
+		fshowmat(pX, rank, 1, "X");
+		}
+	int retcode = fiterate(0, & fiterGS, pA, pB, & pX, piter, NULL, NULL, NULL, NULL, rank);
+	* ppX = pX;
+	return retcode;
+	}
+	
+int fsolveJ(float * psrc, int rank, float ** ppX, int * piter) {
+// Resolve o sistema de equações pelo método de Jacobi	
+	extern int debuglevel_;
+	int ncols = rank + 1;
+	float * pA = (float *) malloc(rank * rank * sizeof(float));
+	float * pB = (float *) malloc(rank * sizeof(float));
+	float * pX = (float *) malloc(rank * sizeof(float));
+	if (pA == NULL || pB == NULL || pX == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank + 2);
+		exit(7);
+		}
+	for (int i = 0; i < rank; ++ i) {
+		for (int j = 0; j < rank; ++ j) {
+			pA[i * rank + j] = psrc[i * ncols + j];
+			}
+		pB[i] = psrc[i * ncols + rank];
+		}
+	if (prec_ == 1) {
+		float * pP = (float *) calloc(rank * rank, sizeof(float));
+		if (pP == NULL) {
+			printf("Não conseguiu alocar memória para a matriz %d x %d! \n", rank, rank);
+			exit(7);
+			}	
+		for (int i = 0; i < rank; ++ i) {
+			pP[i * rank + i] = 1 / psrc[i * ncols + i];
+			flops_ += FLOPS_DIV;
+			}
+		float * paux = fmmult(pP, rank, rank, pA, rank, rank);
+		free(pA);
+		pA = paux;
+		paux = fmmult(pP, rank, rank, pB, rank, 1);
+		free(pB);
+		pB = paux;
+		}
+	for (int i = 0; i < rank; ++ i) {
+		if (prec_ == 0) {
+			float coef = pA[i * rank + i];
+			coef = 1 / coef;
+			pA[i * rank + i] = coef;
+			pX[i] = pB[i] * coef;
+			flops_ += 1 + FLOPS_DIV;
+			}
+		if (prec_ == 1) {
+			pX[i] = pB[i];
+			}
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pA, rank, rank, "A");
+		fshowmat(pB, rank, 1, "B");
+		fshowmat(pX, rank, 1, "X");
+		}
+	int retcode = fiterate(0, & fiterJ, pA, pB, & pX, piter, NULL, NULL, NULL, NULL, rank);
+	* ppX = pX;
 	return retcode;
 	}
 
