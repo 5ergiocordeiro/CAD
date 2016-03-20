@@ -1,6 +1,4 @@
 /*
-/*
-/*
 exercmat.c
 Uso:
 	exercmat n m [p] [l] [i] [e]
@@ -57,6 +55,8 @@ Códigos de retorno:
 11: Método iterativo demorou demais para convergir.
 12: Método iterativo divergiu.
 13: A matriz não é simétrica.
+14: Divisão por zero inesperada.
+
 
 Observações:
 1) Compilado e testado com MinGW 4.8.2.
@@ -65,7 +65,7 @@ Observações:
 
 
 TO DO:
-1) Verificar liberação de memória alocada
+1) Verificar liberação de memória alocada, principalmente em fsolveG.
 2) Testar função fpower.
 4) Verificar aumento do esforço com aumento do tamanho:
 	Gauss x Cholesky
@@ -82,22 +82,25 @@ TO DO:
 #include <sys/time.h>
 #include <windows.h>
 #include <time.h>
-#include "cblas.h"
 
+#include "cblas.h"
 #define HAVE_LAPACK_CONFIG_H 1
 #define LAPACK_COMPLEX_CPP 1
 #include "lapacke.h"
 
-#define bufsize 10000				// para leitura dos dados em arquivo
+// para leitura dos dados em arquivo
+#define bufsize 10000				
 #define FNAME_MAX_SIZE 255
 #define POSROWNBR 7					// posição do número de linhas no arquivo
 #define POSCOLNBR 10				// posição do número de colunas no arquivo
+// custo de operações
 #define FLOPS_SQRT	15				// https://folding.stanford.edu/home/faq/faq-flops/
 #define FLOPS_DIV	4				// https://stackoverflow.com/questions/329174/what-is-flop-s-and-is-it-a-good-measure-of-performance
 #define FLOPS_MMULT_EXP	3
-#define DEBUGLEVEL_DEF	0			// nível de debug default
-#define MAXERR_DEF	1e-5			// valor de erro máximo default
-#define MAXITER_DEF	10				// número de iterações máximo default
+// defaults
+#define DEBUGLEVEL_DEF	0			// nível de debug
+#define MAXERR_DEF	1e-5			// valor de erro máximo
+#define MAXITER_DEF	100				// número de iterações máximo
 
 void *__gxx_personality_v0;			// desabilita tratamento de exceção
 
@@ -675,11 +678,11 @@ void execprob14(int size) {
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	// Encontra os autovalores extremos pelo método das potências e relata o esforço computacional necessário
 	float maxav, minav = 0;
-	int niter;
+	int niter[2];
 	flops_ = 0;
-	int retcode = fmavP(pAf, nrowA, ncolA, & maxav , & minav, & niter);
+	int retcode = fmavP(pAf, nrowA, ncolA, & maxav , & minav, niter);
 	printf("Autovalores extremos: %f e %f. \n", minav, maxav);
-	printf("Número de operações para cálculo dos autovalores extremos: %d. Iterações: %d. \n", flops_, niter);	
+	printf("Número de operações para cálculo dos autovalores extremos: %d. Iterações: %d e %d \n", flops_, niter[1], niter[0]);	
 	return;
 	}
 
@@ -692,22 +695,29 @@ void execprob15(int size) {
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	// Encontra os autovalores extremos pelo método de Jacobi e relata o esforço computacional necessário
+	if (! fissym(pAf, nrowA, ncolA)) {
+		printf("A matriz não é simétrica! \n");
+		exit(13);
+		}
 	float * pav;
 	int niter;
 	flops_ = 0;
 	int retcode = fmavJ(pAf, nrowA, ncolA, & pav , & niter);
-	fshowmat(pav, nrowA, 1, "Autovalores");
-	printf("Número de operações para cálculo dos autovalores extremos: %d. Iterações: %d. \n", flops_, niter);	
+	if (debuglevel_ >= 1) {
+		fshowmat(pav, nrowA, 1, "Autovalores");
+		}
+	printf("Número de operações para cálculo dos autovalores: %d. Iterações: %d. \n", flops_, niter);	
 	return;
 	}
 
 	
 // Funções para cálculo de autovalores por métodos iterativos
 int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
-// Calcula os autovalores extremos da matriz pelo método de Jacobi
-	float maxofmaxes = 0;
+// Calcula os autovalores da matriz pelo método de Jacobi
+	float lastmax = 1e6, maxofmaxes = 0;
 	int retcode = 11, niter;
 	for (niter = 0; niter < maxiter_; ++ niter) {
+		bool trocou = false;
 		for (int i = 0; i < nrows; ++ i) {
 			float max = 0;
 			int pos = -1;
@@ -720,40 +730,62 @@ int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
 					max = value;
 					pos = j;
 					}
-				if (max > maxofmaxes) {
-					maxofmaxes = max;
-					}
-				float aqq_app = pmat[pos * ncols + pos] - pmat[i * ncols + i];
-				float apq = pmat[i * ncols + pos];
-				float phi = 0.5 * aqq_app / apq;
-				float t;
-				if (phi == 0) {
-					t = 1;
+				}
+			if (pos == -1) {
+				continue;
+				}
+			if (max > maxofmaxes) {
+				maxofmaxes = max;
+				}
+			if (debuglevel_ >= 1) {
+				printf("Iter. %d: A(%d,%d) = %f \n", niter, i, pos, max);
+				}
+			float aqq_app = pmat[pos * ncols + pos] - pmat[i * ncols + i];
+			float apq = pmat[i * ncols + pos];
+			if (apq == 0) {
+				printf("O método falhou na iteração %d porque A(%d,%d) = 0! \n", niter, i, pos);
+				exit(14);
+				}
+			float phi = 0.5 * aqq_app / apq;
+			float t;
+			flops_ += 2 + FLOPS_DIV;
+			if (phi == 0) {
+				t = 1;
+				}
+			else {
+				float root = sqrt(phi * phi + 1);
+				flops_ += FLOPS_SQRT;
+				float divisor;
+				if (phi > 0) {
+					divisor = phi + root;
 					}
 				else {
-					float root = sqrt(phi * phi + 1);
-					float divisor;
-					if (phi > 0) {
-						divisor = phi + root;
-						}
-					else {
-						divisor = phi - root;
-						}
-					t = 1 / divisor;
+					divisor = phi - root;
 					}
-				float t2 = t * t;
-				float um_mais_t2 = 1 + t2;
-				float cos2phi = 1 / um_mais_t2;
-				float sinphicosphi = t * cos2phi;
-				float cos2phi_sin2phi = (1 - t2) * cos2phi;;
-				float newvalue = - aqq_app * sinphicosphi + apq * cos2phi_sin2phi;
-				pmat[i * ncols + pos] = pmat[pos * ncols + i] = newvalue;
+				t = 1 / divisor;
+				flops_ += 1 + FLOPS_DIV;
 				}
+			float t2 = t * t;
+			float um_mais_t2 = 1 + t2;
+			float cos2phi = 1 / um_mais_t2;
+			float sinphicosphi = t * cos2phi;
+			float cos2phi_sin2phi = (1 - t2) * cos2phi;;
+			float newvalue = - aqq_app * sinphicosphi + apq * cos2phi_sin2phi;
+			flops_ += 8 + FLOPS_DIV;				
+			pmat[i * ncols + pos] = pmat[pos * ncols + i] = newvalue;
+			trocou = true;
 			}
-		if (maxofmaxes <= maxerr_) {
+		if (maxofmaxes <= maxerr_ || ! trocou) {
 			retcode = 0;
 			break;
 			}
+		if (maxofmaxes > lastmax) {
+			printf("O método divergiu! \n");
+			retcode = 12;
+			break;
+			}
+		lastmax = maxofmaxes;
+		maxofmaxes = 0;
 		}
 	* piter = niter;
 	float * pav = (float *) malloc (nrows * sizeof(float));
@@ -768,14 +800,12 @@ int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
 	return retcode;
 	}
 	
-
-
 int fmavP(float * pmat, int nrows, int ncols, float * pmax, float * pmin, int * piter) {
 // Calcula os autovalores extremos da matriz pelo método das potências
-	int niter1, niter2;
-	int retcode = fmmaxavP(pmat, nrows, ncols, pmax, & niter1, true);
-	retcode = fmmaxavP(pmat, nrows, ncols, pmin, & niter2, false);
-	* piter = niter1 + niter2;
+	int retcode = fmmaxavP(pmat, nrows, ncols, pmax, piter, true);
+	printf("Flops: %d \n", flops_);
+	flops_ = 0;
+	retcode = fmmaxavP(pmat, nrows, ncols, pmin, piter + 1, false);
 	return retcode;
 	}
 	
