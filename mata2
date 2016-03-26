@@ -1,8 +1,7 @@
 # Created by Octave 4.0.0, Thu Mar 17 13:23:26 2016 Hora oficial do Brasil <unknown@ASUS>
 # name: C
 # type: matrix
-# rows: 3
-# columns: 4
- 3 0 1 1
- 0 9 2 1
- 1 2 1 1
+# rows: 2
+# columns: 2
+ 7 2
+ 2 7
