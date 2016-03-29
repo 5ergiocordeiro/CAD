@@ -28,7 +28,6 @@ n = 12: Lê um sistema gerado pelo MATLAB e o resolve pelo método iterativo de 
 n = 13: Lê um sistema gerado pelo MATLAB e o resolve pelo método de Gauss-Seidel.
 n = 14: Lê uma matriz gerada pelo MATLAB e calcula o maior e o menor autovalor pelo método das potências.
 n = 15: Lê uma matriz gerada pelo MATLAB e calcula todos os seus autovalores pelo método de Jacobi.
-
 n = 16: Lê uma matriz gerada pelo MATLAB e calcula todos os seus autovalores pelo método de Rutishauer e seus autovetores por eliminação Gaussiana com pivotação.
 n = 17: Lê uma matriz gerada pelo MATLAB e decompõe-na em valores singulares.
 n = 18: Lê uma tabela gerada pelo MATLAB e calcula o polinômio interpolador.
@@ -126,7 +125,7 @@ double * d2tri(double * psrc, int rank, double * pdet);
 f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob6, execprob7, execprob8, execprob9, execprob10,
 	execprob11, execprob12, execprob13, execprob14, execprob15,
-	execprob16, execprob17;
+	execprob16, execprob17, execprob18, execprob19;
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 float * fdoLU(float * pB, float * pL, float * pU, int * pP, int nrows);
 float * feqcaracL(float * pmat, int nrows, int ncols);
@@ -137,6 +136,8 @@ float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
+float * finterp(float * pA, int nrows);
+float * finterpL(float * pA, int nrows);
 float * finvG(float * pmat, int rank, int ncols, float * pdet);
 float * finvTS(float * pmat, int rank, int ncols, bool superior);
 bool fisddom(float * pmat, int nrows, int ncols);
@@ -171,6 +172,7 @@ float * f2Chol(float * psrc, int rank, float * pdet);
 float * f2diag(float * psrc, int rank, float * pdet);
 void f2LR(float * psrc, int rank, float ** ppL, float ** ppR);
 void f2LU(float * psrc, int rank, float ** ppL, float ** ppU, int ** ppP, float * pdet);
+int f2SVD(float * pA, int nrows, int ncols, float ** ppS , float ** ppU, float ** ppV);
 float * f2sys(float * psrc, float * pval, int rank);
 float * f2tri(float * psrc, int rank, int ncols, float * pdet = NULL);
 void ldchangerows(long double * pmat, int rows, int ncols, int row1, int row2);
@@ -206,7 +208,8 @@ int main(int argc, const char * argv[]) {
 		& execprob7, & execprob8, & execprob9,
 		& execprob10, & execprob11, & execprob12,
 		& execprob13, & execprob14, & execprob15,
-		& execprob16, // & execprob17
+		& execprob16, & execprob17, & execprob18,
+		& execprob19
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -271,7 +274,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 17) {
+	if (probnbr < 1 || probnbr > 19) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -476,6 +479,7 @@ void execprob6(int size) {
 	for (int i = 0; i < 100; ++ i) {
 		free(pCf);
 		pCf = fgemm(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+		flops_ += (nrowA * 2 * (ncolA - 1 ));
 		}
 	ucrono(false, 100);
 	// Calcula e relata a norma 2 dos resultados
@@ -484,6 +488,7 @@ void execprob6(int size) {
 	for (int i = 0; i < 100; ++ i) {
 		free(pCf);
 		pCf = fgemmref(pAf, nrowA, ncolA, pBf, nrowB, ncolB);
+		flops_ += (nrowA * 2 * (ncolA - 1 ));		
 		}
 	ucrono(false, 100);
 	// Calcula e relata a norma 2 dos resultados
@@ -701,7 +706,6 @@ void execprob15(int size) {
 	float * pav, * pmav;
 	int niter;
 	flops_ = 0;
-/*	
 	int retcode = fmavJ(pAf, nrowA, nrowA, & pav , & niter);
 	if (debuglevel_ >= 2) {
 		fshowmat(pav, nrowA, 1, "Autovalores");
@@ -709,10 +713,12 @@ void execprob15(int size) {
 	printf("Número de operações: %lld. Iterações: %d. \n", flops_, niter);
 	free(pAf);
 	free(pav);
-*/
-	// float * pAf = fmslice(pAd, nrowA, ncolA, nrowA, nrowA, 0, 0);
+	pAf = fmslice(pAd, nrowA, ncolA, nrowA, nrowA, 0, 0);
 	flops_ = 0;
-	int retcode = fmavJ(pAf, nrowA, nrowA, & pav , & niter, & pmav);
+	retcode = fmavJ(pAf, nrowA, nrowA, & pav , & niter, & pmav);
+	if (debuglevel_ >= 2) {
+		fshowmat(pav, nrowA, 1, "Autovalores");
+		}
 	printf("Número de operações: %lld. Iterações: %d. \n", flops_, niter);	
 	return;
 	}
@@ -723,7 +729,7 @@ void execprob16(int size) {
 	int nrowA, ncolA, nrowB, ncolB;
 	double * pAd = lermat("C", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
-	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	float * pAf = fmslice(pAd, nrowA, ncolA, nrowA, nrowA, 0, 0);
 	// Encontra os autovalores pelo método de Rutishauer e relata o esforço computacional necessário
 	float * pav;
 	int niter;
@@ -733,31 +739,236 @@ void execprob16(int size) {
 		fshowmat(pav, nrowA, 1, "Autovalores");
 		}
 	printf("Número de operações para encontrar os autovalores: %lld. Iterações: %d. \n", flops_, niter);
-	// Encontra os autovetores por eliminação Gaussiana com pivotação
-	float * mav = (float *) malloc(nrowA * nrowA * sizeof(float));
-	float * pdiag = (float *) malloc(nrowA * sizeof(float));
-	for (int j = 0; j < nrowA; ++ j) {
-		pdiag[j] = pAf[j * ncolA + j]; 
-		}	
-	for (int i = 0; i < nrowA; ++ i) {
-		for (int j = 0; j < nrowA; ++ j) {
-			pAf[j * ncolA + j] = pdiag[j] - pav[i];
-			++ flops_;
-			}
-		float * paux = fsolveG(pAf, nrowA);
-		for (int j = 0; j < nrowA; ++ j) {
-			mav[j * ncolA + i] = paux[j];
-			}
-		}
-	printf("Número de operações para encontrar os autovetores: %lld. \n", flops_);
 	return;
 	}
 
+void execprob17(int size) {
+// Executa o problema número '17' com o tamanho 'size' indicado.
+	// Lê as matrizes de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("A", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Decompõe a matriz na forma SVD
+	float * pS, * pU, * pV;
+	flops_ = 0;
+	int retcode = f2SVD(pAf, nrowA, ncolA, & pS , & pU, &pV);
+	if (debuglevel_ >= 2) {
+		fshowmat(pAf, nrowA, nrowA, "A");
+		fshowmat(pS, nrowA, nrowA, "S");
+		fshowmat(pU, nrowA, nrowA, "U");
+		fshowmat(pV, nrowA, nrowA, "V");		
+		}
+	printf("Número de operações para a decomposição: %lld. \n", flops_);
+	return;
+	}
+
+void execprob18(int size) {
+// Executa o problema número '18' com o tamanho 'size' indicado.
+	// Lê as matrizes de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém os coeficientes do polinômio para interpolação
+	flops_ = 0;
+	float * pP = finterp(pAf, nrowA);
+	if (debuglevel_ >= 2) {
+		fshowmat(pP, nrowA, 1, "p");
+		}
+	printf("Número de operações para a interpolação: %lld. \n", flops_);
+	return;
+	}
+
+void execprob19(int size) {
+// Executa o problema número '19' com o tamanho 'size' indicado.
+	// Lê as matrizes de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém os coeficientes do polinômio para interpolação
+	flops_ = 0;
+	float * pP = finterpL(pAf, nrowA);
+	if (debuglevel_ >= 2) {
+		fshowmat(pP, nrowA, 1, "p");
+		}
+	printf("Número de operações para a interpolação: %lld. \n", flops_);
+	return;
+	}
+	
+
+// Funções para interpolação
+float * finterp(float * pA, int nrows) {
+// Calcula os coeficientes para interpolação polinomial pelo método de Vandermonde
+	float * pv = (float *) malloc(nrows * (nrows + 1) * sizeof(float));
+	if (pv == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nrows, nrows + 1);
+		exit(7);
+		}
+	for (int i = 0; i < nrows; ++ i) {
+		float val, x = pA[i * 2];
+		float prod = x;
+		for (int j = 0; j < nrows; ++ j) {
+			switch (j) {
+				case 0:
+					val = 1;
+					break;
+				case 1:
+					val = x;
+					break;
+				default:
+					prod *= x;
+					val = prod;
+				}
+			pv[i * (nrows + 1) + j] = val;
+			}
+		pv[i * (nrows + 1) + nrows] = pA[i * 2 + 1];
+		}
+	float * coef = fsolveG(pv, nrows);
+	return coef;
+	}
+	
+float * finterpL(float * pA, int nrows) {
+// Calcula os coeficientes para interpolação polinomial pelo método de Vandermonde
+	float * pv = (float *) malloc(nrows * (nrows + 1) * sizeof(float));
+	if (pv == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nrows, nrows + 1);
+		exit(7);
+		}
+	for (int i = 0; i < nrows; ++ i) {
+		float sum = 0;
+		for (int j = 0; j < nrows; ++ j) {
+			float prod = 1;
+			for (int k = 0; k < nrows; ++ k) {
+				if (k != j) {
+					prod *= ;
+					}
+				+= flops_;
+				}
+			pv[i] = sum;
+			}
+		}
+	}
+	
+// Funções para decomposições
+int f2SVD(float * pA, int nrows, int ncols, float ** ppS , float ** ppU, float ** ppV) {
+// Calcula a decomposição SVD de uma matriz
+	float * mav = NULL;
+	float * psys = (float *) calloc(ncols * (ncols + 1), sizeof(float));
+	float * pw = (float *) malloc(nrows * sizeof(float));
+	float * pwaux = (float *) calloc(nrows, sizeof(float));
+	float * paux = (float *) malloc(ncols * sizeof(float));
+	float * pU = (float *) malloc(nrows * nrows * sizeof(float));
+	float * pS = (float *) calloc(ncols * nrows, sizeof(float));
+	if (psys == NULL || pw == NULL || pU == NULL || pS == NULL || paux == NULL) {
+		printf("Não conseguiu alocar memória para as matrizes! \n");
+		exit(7);
+		}
+	float * pAt = ftranspose(pA, nrows, ncols);
+	float * pmat = fgemm(pAt, ncols, nrows, pA, nrows, ncols);
+	flops_ += (ncols * 2 * (nrows - 1 ));
+	free(pAt);
+	// Calcula os autovalores e autovetores pelo método de Jacobi
+	int niter;
+	float * pav;
+	int retcode = fmavJ(pmat, ncols, ncols, & pav , & niter, & mav);
+	if (retcode != 0) {
+		return retcode;
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pav, ncols, 1, "Autovalores");
+		fshowmat(mav, ncols, ncols, "Autovetores");
+		}	
+	for (int k = 0; k < ncols; ++ k) {
+		float sing = sqrt(pav[k]);
+		flops_ += FLOPS_SQRT;
+		pS[k * nrows + k] = sing;
+		for (int j = 0; j < ncols; ++ j) {
+			paux[j] = mav[j * ncols + k];
+			}
+		float * pv = fgemm(pA, nrows, ncols, paux, ncols, 1);
+		flops_ += (nrows * 2 * (ncols - 1 ));		
+		for (int j = 0; j < nrows; ++ j) {
+			pU[j * nrows + k] = pv[j] / sing;
+			flops_ += FLOPS_DIV;
+			}
+		free(paux);
+		free(pv);
+		}
+	free(pmat);
+	free(psys);
+	if (debuglevel_ >= 2) {
+		fshowmat(mav, ncols, ncols, "V");
+		fshowmat(pS, ncols, nrows, "S");
+		fshowmat(pU, nrows, nrows, "U");
+		}	
+	for (int k = ncols; k < nrows; ++ k) {
+		paux = (float *) calloc(nrows, sizeof(float));
+		if (paux == NULL) {
+			printf("Não conseguiu alocar memória para a matriz de %d x 1! \n", nrows);
+			exit(7);
+			}
+		paux[k] = 1;
+		for (int j = 0; j < k; ++ j) {
+			for (int i = 0; i < nrows; ++ i) {
+				pw[i] = pU[i * nrows + j];
+				}
+			float * pesc = fgemm(paux, 1, nrows, pw, nrows, 1);
+			flops_ += (2 * (nrows - 1));
+			for (int i = 0; i < nrows; ++ i) {
+				pw[i] *= * pesc;
+				++ flops_;
+				}
+			free(pesc);
+			if (j == 0) {
+				for (int i = 0; i < nrows; ++ i) {
+					pwaux[i] = pw[i];
+					}
+				}
+			else {
+				float * psum = fmadd(pwaux, nrows, 1, pw, nrows, 1, true);
+				free(pwaux);
+				pwaux = psum;
+				}
+			}
+		if (debuglevel_ >= 2) {
+			fshowmat(paux, nrows, 1, "v");
+			fshowmat(pwaux, nrows, 1, "aux");
+			}		
+		float * psum = fmadd(paux, nrows, 1, pwaux, nrows, 1, false);
+		float * pesc = fgemm(psum, 1, nrows, psum, nrows, 1);
+		flops_ += (2 * (nrows - 1));
+		float invesc = 1 / sqrt(* pesc);
+		flops_ += FLOPS_DIV + FLOPS_SQRT;
+		for (int i = 0; i < nrows; ++ i) {
+			psum[i] *= invesc;
+			++ flops_;
+			}
+		if (debuglevel_ >= 2) {
+			fshowmat(psum, nrows, 1, "w");
+			}		
+		free(pesc);
+		for (int i = 0; i < nrows; ++ i) {
+			pU[i * nrows + k] = psum[i];
+			}
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(mav, ncols, ncols, "V");
+		fshowmat(pS, ncols, nrows, "S");
+		fshowmat(pU, nrows, nrows, "U");
+		}	
+	debuglevel_ = 0;	
+	* ppV = mav;
+	* ppS = pS;
+	* ppU = pU;
+	return 0;
+	}
 	
 // Funções para cálculo de autovalores por métodos iterativos
 int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter, float ** ppmav) {
 // Calcula os autovalores da matriz pelo método de Jacobi
-	float lastmax = 1e6, maxofmaxes = 0, * mav;
+	float lastmax = 1e6, maxofmaxes = 0, * mav = NULL;
 	int retcode = 11, niter;
 	float * pav = (float *) malloc (nrows * sizeof(float));
 	if (pav == NULL) {
@@ -856,9 +1067,8 @@ int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter, float 
 					mav = pmU;
 					}
 				else {
-					// float * paux = fmmult(mav, nrows, nrows, pmU, nrows, nrows);
 					float * paux = fgemm(mav, nrows, nrows, pmU, nrows, nrows);
-					flops_ += (nrows * nrows * nrows);
+					flops_ += (nrows * 2 * (nrows - 1 ));
 					free(mav);
 					free(pmU);
 					mav = paux;
@@ -886,6 +1096,12 @@ int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter, float 
 		}
 	* ppav = pav;
 	if (ppmav != NULL) {
+		if (mav == NULL) {
+			mav = (float *) malloc(nrows * nrows * sizeof(float));
+			for (int i = 0; i < nrows; ++ i) {
+				mav[i * nrows + i] = 1;
+				}
+			}
 		* ppmav = mav;
 		}
 	return retcode;
@@ -903,7 +1119,15 @@ int fmavR(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
 	float * pA = pmat;
 	for (niter = 0; niter < maxiter_; ++ niter) {
 		float * pL, * pR;
+		if (debuglevel_ >= 1) {
+			printf("Iter. %d \n", niter);
+			}
 		f2LR(pA, nrows, & pL, & pR);
+		if (debuglevel_ >= 2) {
+			fshowmat(pA, nrows, nrows, "A");
+			fshowmat(pL, nrows, nrows, "L");
+			fshowmat(pR, nrows, nrows, "R");
+			}
 		float * pRL = fmmult(pR, nrows, nrows , pL, nrows, nrows);
 		if (fistris(pRL, nrows, nrows)) {
 			retcode = 0;
@@ -914,6 +1138,12 @@ int fmavR(float * pmat, int nrows, int ncols, float ** ppav, int * piter) {
 			}
 		pA = pRL;
 		}
+	for (int i = 0; i < nrows; ++ i) {
+		pav[i] = pA[i * nrows + i];
+		}
+	* piter = niter;
+	* ppav = pav;
+	return retcode;
 	}
 	
 int fmmaxavP(float * pmat, int nrows, int ncols, float * pmax, int * piter, bool direto) {
@@ -972,6 +1202,7 @@ int fmmaxavP(float * pmat, int nrows, int ncols, float * pmax, int * piter, bool
 	* piter = niter;
 	return retcode;
 	}
+
 
 // Funções para solução de sistemas por métodos iterativos
 int fiterGS(float * pA, float * pB, float * pmerror, float * pcorr, float ** ppX, float * pM, float * pC, int * pim, int nrows) {
@@ -1383,6 +1614,7 @@ float * fpower(float * pmat, int nrows, int ncols, int pot) {
 	float * plast = pvals;
 	for (int i = 2; i <= pot; ++ i) {
 		float * result = fgemm(pvals, nrows, nrows, plast, nrows, nrows);
+		flops_ += (nrows * 2 * (nrows - 1 ));		
 		if (debuglevel_ >= 2) {
 			printf("A^%d", i);
 			fshowmat(result, nrows, nrows, "");
@@ -2191,7 +2423,7 @@ float * ftranspose(float * psrc, int nrows, int ncols) {
 		}
 	for (int i = 0; i < nrows; ++ i) {
 		for (int j = 0; j < ncols; ++ j) {
-			pdst[i * ncols + j] = psrc[j * ncols + i];
+			pdst[j * nrows + i] = psrc[i * ncols + j];
 			}
  		}
 	return pdst;
@@ -2761,7 +2993,7 @@ bool fissym(float * pmat, int nrows, int ncols) {
 
 bool fistris(float * pmat, int nrows, int ncols) {
 	for (int i = 1; i < nrows; ++ i) {
-		for (int j = i + 1; j < nrows; ++ j) {
+		for (int j = 0; j < i; ++ j) {
 			if (pmat[i * ncols + j] != 0) {
 				return false;
 				}
