@@ -33,7 +33,9 @@ n = 17: Lê uma matriz gerada pelo MATLAB e decompõe-na em valores singulares.
 n = 18: Lê uma tabela gerada pelo MATLAB e calcula o polinômio interpolador.
 n = 19: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de Lagrange.
 n = 20: Lê uma matriz gerada pelo MATLAB e comprime-a, por meio de decomposição em valores singulares.
-
+n = 21: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de Hermite.
+n = 22: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método do spline cúbico.
+n = 23: Lê uma tabela gerada pelo MATLAB e extrapola um ponto pelo método tradicional e pelo de Richardson.
 
 Valores de p:
 p = 0: Não usar precondicionador(default)
@@ -133,20 +135,25 @@ double * d2tri(double * psrc, int rank, double * pdet);
 f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob6, execprob7, execprob8, execprob9, execprob10,
 	execprob11, execprob12, execprob13, execprob14, execprob15,
-	execprob16, execprob17, execprob18, execprob19, execprob20;
+	execprob16, execprob17, execprob18, execprob19, execprob20,
+	execprob21, execprob22, execprob23;
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float retain, float ** ppnS, float ** ppnU, float ** ppnV, fcompressdata * pstats);
 float * fdoLU(float * pB, float * pL, float * pU, int * pP, int nrows);
 float * feqcaracL(float * pmat, int nrows, int ncols);
 float * feqcaracLF(float * pmat, int nrows, int ncols, float * pdev = NULL, float ** ppinv = NULL);
+float fextrapR(float * pA, int nrows, int ncols);
 int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 void ffromsys(float * psys, int nrows, int ncols, float ** ppA, float ** ppB);
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
-float * finterp(float * pA, int nrows);
-float finterpL(float * pA, int nrows);
+float * finterp(float * pA, int nrows, int ncols);
+float finterpH(float * pA, int nrows, int ncols);
+float finterpL(float * pA, int nrows, int ncols);
+float finterpS(float * pA, int nrows, int ncols);
+float finterpSH(float * pA, int nrows, int ncols);
 float * finvG(float * pmat, int rank, int ncols, float * pdet);
 float * finvTS(float * pmat, int rank, int ncols, bool superior);
 bool fisddom(float * pmat, int nrows, int ncols);
@@ -219,7 +226,8 @@ int main(int argc, const char * argv[]) {
 		& execprob10, & execprob11, & execprob12,
 		& execprob13, & execprob14, & execprob15,
 		& execprob16, & execprob17, & execprob18,
-		& execprob19, & execprob20
+		& execprob19, & execprob20, & execprob21,
+		& execprob22,  & execprob23,
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -284,7 +292,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 20) {
+	if (probnbr < 1 || probnbr > 23) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -786,7 +794,7 @@ void execprob18(int size) {
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	// Obtém os coeficientes do polinômio para interpolação
 	flops_ = 0;
-	float * pP = finterp(pAf, nrowA);
+	float * pP = finterp(pAf, nrowA, ncolA);
 	if (debuglevel_ >= 2) {
 		fshowmat(pP, nrowA, 1, "p");
 		}
@@ -801,9 +809,9 @@ void execprob19(int size) {
 	double * pAd = lermat("B", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	// Obtém os coeficientes do polinômio para interpolação
+	// Obtém o ponto por interpolação de Lagrange
 	flops_ = 0;
-	float y = finterpL(pAf, nrowA);
+	float y = finterpL(pAf, nrowA, ncolA);
 	printf("Valor: %f. Número de operações para a interpolação: %lld. \n", y, flops_);
 	return;
 	}
@@ -823,11 +831,11 @@ void execprob20(int size) {
 		printf("Não conseguiu fazer a decomposição! \n");
 		}
 	printf("Número de operações para a decomposição: %lld. \n", flops_);
-	flops_ = 0;
 	// Comprime a matriz
 	float * pnS, * pnU, * pnV;
 	fcompressdata stats;
 	printf("Compressão da matriz para 80%% dos valores singulares... \n");
+	flops_ = 0;
 	fcompress(pS, pU, pV, nrowA, ncolA, 0.8, & pnS, & pnU, & pnV, & stats);
 	printf("Rank: %d -> %d. Número de condicionamento: %f -> %f. Max.: %f -> %f. Min.: %f -> %f. Sum.: %f -> %f \n", stats . antes . rank, stats . depois . rank, stats . antes . ncond, stats . depois . ncond, stats . antes . max,stats . depois . max, stats . antes . min, stats . depois . min, stats . antes . sum, stats . depois . sum);
 	int rank = stats . depois . rank;
@@ -845,6 +853,7 @@ void execprob20(int size) {
 	free(pB);
 	free(pC);
 	printf("Compressão da matriz para 60%% dos valores singulares... \n");
+	flops_ = 0;
 	fcompress(pS, pU, pV, nrowA, ncolA, 0.6, & pnS, & pnU, & pnV, & stats);
 	printf("Rank: %d -> %d. Número de condicionamento: %f -> %f. Max.: %f -> %f. Min.: %f -> %f. Sum.: %f -> %f \n", stats . antes . rank, stats . depois . rank, stats . antes . ncond, stats . depois . ncond, stats . antes . max,stats . depois . max, stats . antes . min, stats . depois . min, stats . antes . sum, stats . depois . sum);
 	rank = stats . depois . rank;
@@ -862,6 +871,7 @@ void execprob20(int size) {
 	free(pB);
 	free(pC);
 	printf("Compressão da matriz para 40%% dos valores singulares... \n");
+	flops_ = 0;
 	fcompress(pS, pU, pV, nrowA, ncolA, 0.4, & pnS, & pnU, & pnV, & stats);
 	printf("Rank: %d -> %d. Número de condicionamento: %f -> %f. Max.: %f -> %f. Min.: %f -> %f. Sum.: %f -> %f \n", stats . antes . rank, stats . depois . rank, stats . antes . ncond, stats . depois . ncond, stats . antes . max,stats . depois . max, stats . antes . min, stats . depois . min, stats . antes . sum, stats . depois . sum);
 	rank = stats . depois . rank;
@@ -879,6 +889,7 @@ void execprob20(int size) {
 	free(pB);
 	free(pC);
 	printf("Compressão da matriz para 20%% dos valores singulares... \n");
+	flops_ = 0;
 	fcompress(pS, pU, pV, nrowA, ncolA, 0.2, & pnS, & pnU, & pnV, & stats);
 	printf("Rank: %d -> %d. Número de condicionamento: %f -> %f. Max.: %f -> %f. Min.: %f -> %f. Sum.: %f -> %f \n", stats . antes . rank, stats . depois . rank, stats . antes . ncond, stats . depois . ncond, stats . antes . max,stats . depois . max, stats . antes . min, stats . depois . min, stats . antes . sum, stats . depois . sum);
 	rank = stats . depois . rank;
@@ -897,9 +908,62 @@ void execprob20(int size) {
 	free(pC);
 	return;
 	}
+
+void execprob21(int size) {
+// Executa o problema número '21' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém o ponto por interpolação de Hermite
+	flops_ = 0;
+	float y = finterpH(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a interpolação: %lld. \n", y, flops_);
+	return;
+	}
+
+void execprob22(int size) {
+// Executa o problema número '22' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém o ponto por spline cúbico
+	flops_ = 0;
+	float y = finterpS(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a interpolação: %lld. \n", y, flops_);
+	flops_ = 0;
+	y = finterpSH(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a interpolação: %lld. \n", y, flops_);
+	return;
+	}
+
+void execprob23(int size) {
+// Executa o problema número '23' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém o ponto por spline cúbico
+	flops_ = 0;
+	float y = finterpL(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a extrapolação tradicional: %lld. \n", y, flops_);
+	flops_ = 0;
+	y = fextrapR(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a extrapolação de Richardson: %lld. \n", y, flops_);
+	return;
+	}
+	
+
+// Funções para extrapolação
+float fextrapR(float * pA, int nrows, int ncols) {
+	}
 	
 // Funções para interpolação
-float * finterp(float * pA, int nrows) {
+float * finterp(float * pA, int nrows, int ncols) {
 // Calcula os coeficientes para interpolação polinomial pelo método de Vandermonde
 	float * pv = (float *) malloc(nrows * (nrows + 1) * sizeof(float));
 	if (pv == NULL) {
@@ -907,7 +971,7 @@ float * finterp(float * pA, int nrows) {
 		exit(7);
 		}
 	for (int i = 0; i < nrows; ++ i) {
-		float val, x = pA[i * 2];
+		float val, x = pA[i * ncols];
 		float prod = x;
 		for (int j = 0; j < nrows; ++ j) {
 			switch (j) {
@@ -923,31 +987,156 @@ float * finterp(float * pA, int nrows) {
 				}
 			pv[i * (nrows + 1) + j] = val;
 			}
-		pv[i * (nrows + 1) + nrows] = pA[i * 2 + 1];
+		pv[i * (nrows + 1) + nrows] = pA[i * ncols + 1];
 		}
 	float * coef = fsolveG(pv, nrows);
 	return coef;
 	}
-	
-float finterpL(float * pA, int nrows) {
-// Interpola um valor pelo método de lagrange
-	float x = pA[(nrows - 1) * 2], y = 0;
+
+float finterpH(float * pA, int nrows, int ncols) {
+// Interpola um valor pelo método de Hermite
+	float x = pA[(nrows - 1) * ncols], y = 0;
 	for (int i = 0; i < nrows - 1; ++ i) {
-		float xi = pA[i * 2];
-		float yi = pA[i * 2 + 1];
+		float xi = pA[i * ncols];
+		float yi = pA[i * ncols + 1];
+		float y_i = pA[i * ncols + 2];
+		float prod = 1, dprod = 0;
+		for (int j = 0; j < nrows - 1; ++ j) {
+			float xj = pA[j * ncols];
+			if (i != j) {
+				float xi_xj = xi - xj;
+				float inv_xi_xj = 1.0 / xi_xj;
+				prod *= (x - xj) * inv_xi_xj;
+				dprod += inv_xi_xj;
+				flops_ += 4 + FLOPS_DIV;
+				}
+			}
+		float x_xi = x - xi;
+		float prod2 = prod * prod;
+		float hjn = (1.0 - 2 * x_xi * dprod) * prod2;
+		float hjn_ = x_xi * prod2;
+		y += yi * hjn + y_i * hjn_;
+		flops_ += 11;
+		}
+	pA[(nrows - 1) * ncols + 1] = y;
+	return y;
+	}
+	
+float finterpL(float * pA, int nrows, int ncols) {
+// Interpola um valor pelo método de Lagrange
+	float x = pA[(nrows - 1) * ncols], y = 0;
+	for (int i = 0; i < nrows - 1; ++ i) {
+		float xi = pA[i * ncols];
+		float yi = pA[i * ncols + 1];
 		float prod = 1;
 		for (int j = 0; j < nrows - 1; ++ j) {
-			float xj = pA[j * 2];
+			float xj = pA[j * ncols];
 			if (i != j) {
 				prod *= (x - xj) / (xi - xj);
-				flops_ += 2 + FLOPS_DIV;
+				flops_ += 3 + FLOPS_DIV;
 				}
 			}
 		y += yi * prod;
 		flops_ += 2;
 		}
-	pA[(nrows -1) * 2] = y;
+	pA[(nrows - 1) * ncols + 1] = y;
 	return y;
+	}
+
+float finterpS(float * pA, int nrows, int ncols) {
+// Interpola um valor pelo método de spline cúbico
+	float x = pA[(nrows - 1) * ncols], y = 0;
+	float * px = (float *) malloc(nrows * sizeof(float));
+	float * py = (float *) malloc(nrows * sizeof(float));
+	float * ph = (float *) malloc(nrows * sizeof(float));
+	float * pinvh = (float *) malloc(nrows * sizeof(float));
+	float * pa = (float *) malloc(nrows * sizeof(float));
+	float * pb = (float *) malloc(nrows * sizeof(float));
+	float * pc = (float *) malloc(nrows * sizeof(float));
+	float * ps = (float *) malloc(nrows * sizeof(float));
+	float * pd = (float *) malloc(nrows * sizeof(float));
+	for (int i = 1; i < nrows; ++ i) {
+		int j = i - 1;
+		px[i] = pA[j * ncols];
+		py[i] = pA[j * ncols + 1];
+		}
+	for (int i = 1; i < nrows - 1; ++ i) {
+		ph[i] = px[i + 1] - px[i];
+		pinvh[i] = 1.0 / ph[i];
+		flops_ += 1 + FLOPS_DIV;
+		}
+	for (int i = 2; i < nrows - 1; ++ i) {
+		int j = i - 1;
+		pd[j] = 2 * (ph[i - 1] + ph[i]);
+		pa[j] = ph[i];
+		pb[j] = ph[i - 1];
+		flops_ += 2;
+		}
+	for (int i = 2; i < nrows - 1; ++ i) {
+		int j = i - 1;
+		pc[j] = 6 * (py[i + 1] - py[i]) * pinvh[i] - (py[i] - py[i - 1]) * pinvh[i - 1];
+		flops_ += 6;
+		}
+	for (int i = 2; i < nrows - 2; ++ i) {
+		float R = pb[i] / pd[i - 1];
+		pd[i] += R * pa[i - 1];
+		pc[i] -= R * pc[i - 1];
+		flops_ += 4 + FLOPS_DIV;
+		}
+	pc[nrows - 3] /= pd[nrows - 3];
+	flops_ += FLOPS_DIV;
+	for (int i = nrows - 4; i > 0; -- i) {
+		pc[i] = (pc[i] - pa[i] * pc[i + 1]) / pd[i];
+		flops_ += 2 + FLOPS_DIV;
+		}
+	for (int i = 2; i < nrows - 1; ++ i) {
+		int j = i - 1;
+		ps[i] = pc[j];
+		}
+	ps[1] = 0;
+	ps[nrows - 1] = 0;
+	for (int i = 1; i < nrows - 1; ++ i) {
+		pa[i] = 1.0/6.0 * (ps[i + 1] - ps[i]) * pinvh[i];
+		pb[i] = 0.5 * ps[i];
+		pc[i] = (py[i + 1] - py[i]) * pinvh[i] - 1.0 / 6.0 * (2.0 * ph[i] * ps[i] + ph[i] * ps[i + 1]);
+		pd[i] = py[i];
+		flops_ += 11;
+		}
+	int i = 1;
+	while(x > px[i]) {
+		++ i;
+		}
+	-- i;
+	float x_xi = x - px[i];
+	y = ((pa[i] * x_xi + pb[i]) * x_xi + pc[i]) * x_xi + pd[i];
+	flops_ += 7;
+	pA[(nrows - 1) * ncols + 1] = y;
+	return y;
+	}
+	
+float finterpSH(float * pA, int nrows, int ncols) {
+// Interpola um valor pelo método de spline cúbico Hermitiano
+	float x = pA[(nrows - 1) * ncols], y = 0;
+	float * px = (float *) malloc(nrows * sizeof(float));
+	float * py = (float *) malloc(nrows * sizeof(float));
+	float * pd = (float *) malloc(nrows * sizeof(float));
+	for (int i = 1; i < nrows; ++ i) {
+		int j = i - 1;
+		px[i] = pA[j * ncols];
+		py[i] = pA[j * ncols + 1];
+		pd[i] = pA[j * ncols + 2];
+		}		
+	int i = 1;
+	while(x > px[i]) {
+		++ i;
+		}
+    float t = (x - px[i - 1] ) / (px[i] - px[i - 1]);
+	float _1_t = 1 - t;
+	float a = pd[i - 1] * (px[i] - px[i - 1]) - (py[i] - py[i-1]);
+    float b = - pd[i] * (px[i] - px[i - 1]) + (py[i] - py[i - 1]);
+	float q = _1_t * py[i - 1] + t * py[i] + t * _1_t * (a * _1_t + b * t);
+	flops_ += 20;
+    return q;	
 	}
 	
 // Funções para decomposições SVD
