@@ -36,6 +36,10 @@ n = 20: Lê uma matriz gerada pelo MATLAB e comprime-a, por meio de decomposiç�
 n = 21: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de Hermite.
 n = 22: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método do spline cúbico.
 n = 23: Lê uma tabela gerada pelo MATLAB e extrapola um ponto pelo método tradicional e pelo de Richardson.
+n = 24: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de Neville.
+n = 25: Lê uma tabela gerada pelo MATLAB e ajusta uma curva aos dados pelo método dos mínimos quadrados.
+n = 26: Lê uma tabela gerada pelo MATLAB e calcula a derivada em cada ponto.
+n = 27: Lê uma tabela gerada pelo MATLAB e calcula a área sob a curva em um intervalo dado.
 
 Valores de p:
 p = 0: Não usar precondicionador(default)
@@ -78,7 +82,7 @@ TO DO:
 3) Verificar aumento do esforço com aumento do tamanho:
 	Gauss x Cholesky
 	Leverrier x Leverrier-Faddeev
-4) 
+4) Implementar critério de parada para método de Rutshauser 
 */
 
 #define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
@@ -136,7 +140,9 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob6, execprob7, execprob8, execprob9, execprob10,
 	execprob11, execprob12, execprob13, execprob14, execprob15,
 	execprob16, execprob17, execprob18, execprob19, execprob20,
-	execprob21, execprob22, execprob23;
+	execprob21, execprob22, execprob23, execprob24, execprob25, 
+	execprob26, execprob27;
+float * fajust(float * pmat, int nrows, int ncols, int * pnparms);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float retain, float ** ppnS, float ** ppnU, float ** ppnV, fcompressdata * pstats);
 float * fdoLU(float * pB, float * pL, float * pU, int * pP, int nrows);
@@ -152,6 +158,7 @@ float * fident(int rank, float val = 1);
 float * finterp(float * pA, int nrows, int ncols);
 float finterpH(float * pA, int nrows, int ncols);
 float finterpL(float * pA, int nrows, int ncols);
+float finterpN(float * pA, int nrows, int ncols);
 float finterpS(float * pA, int nrows, int ncols);
 float finterpSH(float * pA, int nrows, int ncols);
 float * finvG(float * pmat, int rank, int ncols, float * pdet);
@@ -227,7 +234,8 @@ int main(int argc, const char * argv[]) {
 		& execprob13, & execprob14, & execprob15,
 		& execprob16, & execprob17, & execprob18,
 		& execprob19, & execprob20, & execprob21,
-		& execprob22,  & execprob23,
+		& execprob22, & execprob23, & execprob24,
+		& execprob25, & execprob26, & execprob27,
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -292,7 +300,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 23) {
+	if (probnbr < 1 || probnbr > 27) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -947,19 +955,180 @@ void execprob23(int size) {
 	double * pAd = lermat("B", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	// Obtém o ponto por spline cúbico
+	// Obtém o ponto por extrapolação
 	flops_ = 0;
 	float y = finterpL(pAf, nrowA, ncolA);
-	printf("Valor: %f. Número de operações para a extrapolação tradicional: %lld. \n", y, flops_);
+	printf("Valor: %f. Número de operações para a extrapolação de Lagrange: %lld. \n", y, flops_);
 	flops_ = 0;
 	y = fextrapR(pAf, nrowA, ncolA);
-	printf("Valor: %f. Número de operações para a extrapolação de Richardson: %lld. \n", y, flops_);
+	printf("Valor: %f. Número de operações para a extrapolação de Richardson/lagrange: %lld. \n", y, flops_);
 	return;
 	}
 	
+void execprob24(int size) {
+// Executa o problema número '24' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("B", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Obtém o ponto por interpolação de Neville
+	flops_ = 0;
+	float y = finterpN(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a interpolação de Neville: %lld. \n", y, flops_);
+	return;
+	}
 
+void execprob25(int size) {
+// Executa o problema número '25' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("E", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	flops_ = 0;
+	// Ajusta a curva aos dados
+	int nparms;
+	float * coef = fajust(pAf, nrowA, ncolA, & nparms);
+	printf("Número de operações para o ajuste: %lld. \n", flops_);
+	fshowmat(coef, nparms, 1, "Coeficientes do polinômio:");	
+	return;
+	}
+	
+void execprob26(int size) {
+	return;
+	}
+
+void execprob27(int size) {
+	return;
+	}
+	
+// Funções para ajuste de polinômios
+float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
+// Ajusta um polinômio aos dados fornecidos
+	int npoints = nrows - 1, nvars = ncols - 1;
+	int grau = pmat[npoints * ncols], nparms = 1 + grau * nvars, acols = nparms + 1;
+	float * pA = (float *) malloc(nparms * acols * sizeof(float));
+	float * pB = (float *) malloc(nparms * sizeof(float));
+	if (debuglevel_ >= 1) {
+		printf("Grau: %d. Variáveis: %d. Pontos: %d. Coeficientes: %d. \n", grau, nvars, npoints, nparms);
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pmat, npoints, ncols, "Pontos:");
+		}
+	if (pA == NULL || pB == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nparms, acols + 1);
+		exit(7);
+		}
+	for (int i = 0; i < nparms; ++ i) {
+		float valor;
+		for (int j = 0; j < i; ++ j) {
+			valor = 0.0;
+			if (debuglevel_ >= 3) {
+				printf("\nA[%d,%d] = A[%d,%d] = {", i, j, j, i);
+				}
+			for (int k = 0; k < npoints; ++ k) {
+				float x1 = pmat[k * ncols + i - 1];
+				if (j == 0) {
+					valor += x1;
+					++ flops_;
+					if (debuglevel_ >= 3) {
+						printf(" %f ", x1);
+						}
+					}
+				else {
+					float x2 = pmat[k * ncols + j - 1];
+					valor += x1 * x2;
+					if (debuglevel_ >= 3) {
+						printf(" %f*%f", x1, x2);
+						}
+					flops_ += 2;
+					}		
+				}
+			pA[i * acols + j] = pA[j * acols + i] = valor;
+			if (debuglevel_ >= 3) {
+			printf("} = %f ", valor);
+				}
+			}
+		if (debuglevel_ >= 3) {
+			printf("\nA[%d,%d] = {", i, i);
+			}
+		if (i == 0) {
+			valor = npoints;
+			if (debuglevel_ >= 3) {
+				printf(" %f ", valor);
+				}
+			}
+		else {
+			valor = 0.0;
+			for (int k = 0; k < npoints; ++ k) {
+				float x = pmat[k * ncols + i - 1];
+				valor += x * x;
+				if (debuglevel_ >= 3) {
+					printf(" %f*%f ", x, x);
+					}
+				flops_ += 2;
+				}
+			}
+		pA[i * acols + i] = valor;
+		if (debuglevel_ >= 3) {
+			printf("} = %f ", valor);
+			}
+		valor = 0;
+		if (debuglevel_ >= 3) {
+			printf("\nXY[%d] = {", i);
+			}
+		for (int k = 0; k < npoints; ++ k) {
+			float x = pmat[k * ncols + i - 1];
+			float y = pmat[k * ncols + nvars];
+			if (i == 0) {
+				valor += y;
+				++ flops_;
+				if (debuglevel_ >= 3) {
+					printf(" %f ", y);
+					}
+				}
+			else {
+				valor += x * y;
+				flops_ += 2;
+				if (debuglevel_ >= 3) {
+					printf(" %f*%f ", x, y);
+					}
+				}
+			}
+		pA[i * acols + nparms] = valor;
+		if (debuglevel_ >= 3) {
+		printf("} = %f ", valor);
+			}
+		}
+	if ( debuglevel_ >= 2) {
+		fshowmat(pA, nparms, nparms + 1, "A");
+		}
+	float * result = fsolveG(pA, nparms);
+	* pnparms = nparms;
+	return result;
+	}
+	
 // Funções para extrapolação
 float fextrapR(float * pA, int nrows, int ncols) {
+	int n = nrows - 1;
+	float y1 = finterpN(pA, nrows, ncols);
+	int newrows = n / 2 + 1;
+	float * newA = (float *) malloc (newrows * ncols * sizeof(float));
+	if (newA == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", newrows * ncols);
+		exit(7);
+		}
+	for (int i = 0; i < newrows - 1; ++ i) {
+		for (int j = 0; j < ncols; ++ j) {
+			newA[i * ncols + j] = pA[2 * i * ncols + j];
+			}
+		}
+	newA[(newrows - 1) * ncols] = pA[(nrows -1) * ncols];
+	float y2 = finterpN(newA, newrows, ncols);
+	int pot = 2;
+	flops_ += 2 + FLOPS_DIV;
+	return (pot * y1 - y2) /(pot - 1);
 	}
 	
 // Funções para interpolação
@@ -1043,6 +1212,56 @@ float finterpL(float * pA, int nrows, int ncols) {
 	return y;
 	}
 
+float finterpN(float * pA, int nrows, int ncols) {
+// Interpola um valor pelo método de Neville
+	float x = pA[(nrows - 1) * ncols];
+	int pos = -1;
+	float * c = (float *) malloc (nrows * sizeof(float));
+	float * d = (float *) malloc (nrows * sizeof(float));
+	if (c == NULL || d == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 2! \n", nrows);
+		exit(7);
+		}
+	float lastxi = 0;
+	for (int i = 0; i < nrows - 1; ++ i) {
+		float xi = pA[i * ncols];
+		if (pos = -1 && x < xi) {
+			float dist1 = fabs(x - xi);
+			float dist2 = fabs(x - lastxi);
+			pos = (dist1 > dist2) ? i - 1 : i;
+			flops_ += 2;
+			}
+		lastxi = xi;
+		c[i] = d[i] = pA[i * ncols + 1];
+		}
+	float y = pA[pos * ncols + 1];
+	-- pos; 
+	for (int j = 1; j < nrows - 2; ++ j) {
+		for (int i = 0; i < nrows - j - 1; ++ i) {
+			float ho = pA[i * ncols] - x;
+			float hp = pA[(i + j) * ncols] - x;
+			float w = c[i + 1] - d[i];
+			float den = ho - hp;
+			den = w / den;
+			d[i] = hp * den;
+			c[i] = ho * den;
+			flops_ += 6 + FLOPS_DIV;
+			}
+		float dy;
+		if (2 * pos < nrows - 1 - j) {
+			dy = c[pos + 1];
+			}
+		else {
+			dy = d[pos];
+			-- pos;
+			}
+		y += dy;
+		++ flops_;
+		}
+	pA[(nrows - 1) * ncols + 1] = y;
+	return y;
+	}
+	
 float finterpS(float * pA, int nrows, int ncols) {
 // Interpola um valor pelo método de spline cúbico
 	float x = pA[(nrows - 1) * ncols], y = 0;
