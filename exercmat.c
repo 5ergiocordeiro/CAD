@@ -68,6 +68,7 @@ Códigos de retorno:
 12: Método iterativo divergiu.
 13: A matriz não é simétrica.
 14: Divisão por zero inesperada.
+15: Grau do polinômio inválido.
 
 
 Observações:
@@ -82,7 +83,8 @@ TO DO:
 3) Verificar aumento do esforço com aumento do tamanho:
 	Gauss x Cholesky
 	Leverrier x Leverrier-Faddeev
-4) Implementar critério de parada para método de Rutshauser 
+4) Implementar critério de parada para método de Rutshauer.
+5) Implementar regressão polinomial múltipla.
 */
 
 #define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
@@ -116,6 +118,8 @@ TO DO:
 
 void *__gxx_personality_v0;			// desabilita tratamento de exceção
 
+typedef enum {Progressivo, Retroativo, Central} ModoDeriv;
+
 typedef void f_exec(int);			// função a ser despachada
 typedef int f_iter(float *, float *, float *, float *, float **, float *, float *, int *, int);
 typedef struct {
@@ -145,6 +149,8 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float retain, float ** ppnS, float ** ppnU, float ** ppnV, fcompressdata * pstats);
+float * fderivP(float * pmat, int nrows, int ncols);
+float * fderivS(float * pmat, int nrows, int ncols, ModoDeriv modo);
 float * fdoLU(float * pB, float * pL, float * pU, int * pP, int nrows);
 float * feqcaracL(float * pmat, int nrows, int ncols);
 float * feqcaracLF(float * pmat, int nrows, int ncols, float * pdev = NULL, float ** ppinv = NULL);
@@ -155,6 +161,7 @@ float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
+float finteg(float * pmat, int nrows, int ncols, int n);
 float * finterp(float * pA, int nrows, int ncols);
 float finterpH(float * pA, int nrows, int ncols);
 float finterpL(float * pA, int nrows, int ncols);
@@ -996,12 +1003,146 @@ void execprob25(int size) {
 	}
 	
 void execprob26(int size) {
+// Executa o problema número '26' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("F", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	flops_ = 0;
+	// Calcula a derivada por diversios métodos
+	float * derivada = fderivP(pAf, nrowA, ncolA);
+	printf("Número de operações para o cálculo da derivada conforme fórmula de primeira ordem: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
+	free(derivada);
+	derivada = fderivS(pAf, nrowA, ncolA, Progressivo);
+	printf("Número de operações para o cálculo da derivada conforme fórmula progressiva de segunda ordem: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
+	free(derivada);
+	derivada = fderivS(pAf, nrowA, ncolA, Retroativo);
+	printf("Número de operações para o cálculo da derivada conforme fórmula retroativa de segunda ordem: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
+	free(derivada);
+	derivada = fderivS(pAf, nrowA, ncolA, Central);
+	printf("Número de operações para o cálculo da derivada conforme fórmula central de segunda ordem: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
+	free(derivada);	
 	return;
 	}
 
 void execprob27(int size) {
+// Executa o problema número '27' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("F", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	flops_ = 0;
+	// Calcula a integral por polinômios de diversas ordens
+	float result = finteg(pAf, nrowA, ncolA, 1);	
+	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de primeira ordem: %lld. \n", result, flops_);
+	result = finteg(pAf, nrowA, ncolA, 2);	
+	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de segunda ordem: %lld. \n", result, flops_);
+	result = finteg(pAf, nrowA, ncolA, 3);	
+	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de terceira ordem: %lld. \n", result, flops_);
 	return;
 	}
+	
+	
+// Funções para derivação
+float * fderivP(float * pmat, int nrows, int ncols) {
+// Calcula a derivada progressiva em cada ponto, conforme fórmula de primeira ordem
+	int npoints = nrows - 1;
+	float * result = (float *) malloc(npoints * sizeof(float));
+	if (result == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", npoints);
+		exit(7);
+		}
+	for (int i = 1; i < npoints; ++ i) {
+		int last = i - 1;
+		result[last] = (pmat[i * ncols + 1] - pmat[last * ncols + 1]) / (pmat[i * ncols] - pmat[last * ncols]);
+		flops_ += 2 + FLOPS_DIV;
+		}
+	return result;
+	}
+	
+float * fderivS(float * pmat, int nrows, int ncols, ModoDeriv modo) {
+// Calcula a derivada em cada ponto, conforme fórmula de segunda ordem
+	int npoints = nrows - 2;
+	float * result = (float *) malloc(npoints * sizeof(float));
+	if (result == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", npoints);
+		exit(7);
+		}
+	float invdoish = 1.0 / (2 * (pmat[ncols] - pmat[0]));
+	flops_ += 2 + FLOPS_DIV;
+	for (int i = 2; i < nrows; ++ i) {
+		int last = i - 1, lastlast = i - 2;
+		switch (modo) { 
+			case Progressivo:
+				result[lastlast] = (pmat[lastlast * ncols + 1] - 4 * pmat[last * ncols + 1] + 3 * pmat[i * ncols + 1])* invdoish;
+				flops_ += 4;
+				break;
+			case Retroativo:
+				result[lastlast] = (- 3 * pmat[lastlast * ncols + 1] + 4 * pmat[last * ncols + 1] - pmat[i * ncols + 1])* invdoish;
+				flops_ += 4;
+				break;
+			case Central:
+				result[lastlast] = (- pmat[lastlast * ncols + 1] + pmat[i * ncols + 1])* invdoish;
+				flops_ += 2;				
+				break;
+			}
+		}
+	return result;
+	}
+
+
+// Funções para integração
+float finteg(float * pmat, int nrows, int ncols, int n) {
+// Calcula a integral em cada ponto, conforme fórmula de ordem 'n'
+	#define INT_TERMS_ROWS 3
+	#define INT_TERMS_COLS 5
+	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
+		{1, 1, 2}, {1, 4, 1, 3}, {3, 9, 9, 3, 8}
+		};
+	int intervals = nrows - 1;
+	if (n < 1 || n > 3 || (intervals % n) > 0) {
+		printf("Grau do polinômio inválido: %d", n);
+		exit(15);
+		}
+	int * pterms = & terms[n - 1][0];
+	float h = pmat[ncols] - pmat[0];
+	++ flops_;
+	int i = 0, j, k;
+	float valor = 0.0;
+	debuglevel_ = 2;
+	if (debuglevel_ >= 2) {
+		printf(" = %f / %d * (", h, pterms[n + 1]);
+		}
+	i = j = k = 0;
+	while (i < intervals) {
+		float parcela = pmat[k * ncols + 1];
+		valor += pterms[j] * parcela;
+		if (debuglevel_ >= 2) {
+			printf(" %d*%f", pterms[j], parcela);
+			}	
+		flops_ += 2;
+		if (++ j > n) {
+			j = 0;
+			i += n;
+			}
+		else {
+			++ k;
+			}
+		}
+	if (debuglevel_ >= 2) {
+		printf(") \n");
+		}	
+	float result = h * valor / pterms[n + 1];
+	flops_ += 1 + FLOPS_DIV;
+	return result;
+	}
+
 	
 // Funções para ajuste de polinômios
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
@@ -1010,15 +1151,15 @@ float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
 	int grau = pmat[npoints * ncols], nparms = 1 + grau * nvars, acols = nparms + 1;
 	float * pA = (float *) malloc(nparms * acols * sizeof(float));
 	float * pB = (float *) malloc(nparms * sizeof(float));
+	if (pA == NULL || pB == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nparms, acols + 1);
+		exit(7);
+		}
 	if (debuglevel_ >= 1) {
 		printf("Grau: %d. Variáveis: %d. Pontos: %d. Coeficientes: %d. \n", grau, nvars, npoints, nparms);
 		}
 	if (debuglevel_ >= 2) {
 		fshowmat(pmat, npoints, ncols, "Pontos:");
-		}
-	if (pA == NULL || pB == NULL) {
-		printf("Não conseguiu alocar memória para a matriz %d x %d! \n", nparms, acols + 1);
-		exit(7);
 		}
 	for (int i = 0; i < nparms; ++ i) {
 		float valor;
@@ -1109,6 +1250,7 @@ float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
 	return result;
 	}
 	
+	
 // Funções para extrapolação
 float fextrapR(float * pA, int nrows, int ncols) {
 	int n = nrows - 1;
@@ -1130,6 +1272,7 @@ float fextrapR(float * pA, int nrows, int ncols) {
 	flops_ += 2 + FLOPS_DIV;
 	return (pot * y1 - y2) /(pot - 1);
 	}
+	
 	
 // Funções para interpolação
 float * finterp(float * pA, int nrows, int ncols) {
@@ -1358,6 +1501,7 @@ float finterpSH(float * pA, int nrows, int ncols) {
     return q;	
 	}
 	
+	
 // Funções para decomposições SVD
 int f2SVD(float * pA, int nrows, int ncols, float ** ppS , float ** ppU, float ** ppV) {
 // Calcula a decomposição SVD de uma matriz
@@ -1544,6 +1688,7 @@ void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float r
 	* ppnV = pnV;
 	return; 
 	}
+	
 	
 // Funções para cálculo de autovalores por métodos iterativos
 int fmavJ(float * pmat, int nrows, int ncols, float ** ppav, int * piter, float ** ppmav) {
