@@ -43,6 +43,7 @@ n = 27: Lê uma tabela gerada pelo MATLAB e calcula a área sob a curva em um in
 n = 28: Lê uma tabela gerada pelo MATLAB e calcula as derivadas em cada ponto.
 n = 29: Lê uma especificação de intervalo e calcula as integrais elípticas correspondentes.
 n = 30: Lê especificação de um solenóide e calcula sua indutância.
+n = 31: Lê especificação de um capacitor coaxial e calcula o poptencial e o campo elétrico no seu interior.
 
 Valores de p:
 p = 0: Não usar precondicionador(default)
@@ -88,6 +89,7 @@ TO DO:
 	Leverrier x Leverrier-Faddeev
 4) Implementar critério de parada para método de Rutshauer.
 5) Implementar regressão polinomial múltipla.
+6) Implementar splino cúbico não-natural.
 */
 
 #define __USE_MINGW_ANSI_STDIO 1	// para usar precisão estendida
@@ -102,25 +104,27 @@ TO DO:
 #include <time.h>
 
 #include "cblas.h"
-#define HAVE_LAPACK_CONFIG_H 1
-#define LAPACK_COMPLEX_CPP 1
+#define HAVE_LAPACK_CONFIG_H	1
+#define LAPACK_COMPLEX_CPP 		1
 #include "lapacke.h"
 
-#define PI				3.1415926535897932384626433832795
-#define PISOBRE2		(0.5 * PI)
+#define PI			3.1415926535897932384626433832795
+#define PISOBRE2	(0.5 * PI)
 
 // para leitura dos dados em arquivo
-#define bufsize 50000				
-#define FNAME_MAX_SIZE 255
-#define POSROWNBR 7					// posição do número de linhas no arquivo
-#define POSCOLNBR 10				// posição do número de colunas no arquivo
+#define bufsize 		50000				
+#define FNAME_MAX_SIZE	255
+#define POSROWNBR		7			// posição do número de linhas no arquivo
+#define POSCOLNBR 		10			// posição do número de colunas no arquivo
 // custo de operações
-#define FLOPS_SQRT	15				// https://folding.stanford.edu/home/faq/faq-flops/
-#define FLOPS_DIV	4				// https://stackoverflow.com/questions/329174/what-is-flop-s-and-is-it-a-good-measure-of-performance
+// (https://www-ssl.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf)
+#define FLOPS_SQRT		10
+#define FLOPS_DIV		10
+#define FLOPS_SIN		37
 // defaults
 #define DEBUGLEVEL_DEF	0			// nível de debug
-#define MAXERR_DEF	1e-5			// valor de erro máximo
-#define MAXITER_DEF	100				// número de iterações máximo
+#define MAXERR_DEF		1e-5		// valor de erro máximo
+#define MAXITER_DEF		100			// número de iterações máximo
 
 void *__gxx_personality_v0;			// desabilita tratamento de exceção
 
@@ -152,7 +156,8 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob11, execprob12, execprob13, execprob14, execprob15,
 	execprob16, execprob17, execprob18, execprob19, execprob20,
 	execprob21, execprob22, execprob23, execprob24, execprob25, 
-	execprob26, execprob27, execprob28, execprob29, execprob30;
+	execprob26, execprob27, execprob28, execprob29, execprob30,
+	execprob31;
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float retain, float ** ppnS, float ** ppnU, float ** ppnV, fcompressdata * pstats);
@@ -174,6 +179,7 @@ double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
 float findut(int n, float h, float r, float d);
 float finteg(float * pmat, int nrows, int ncols, int n);
+float fintegf(f_func * fp, float xi, float xf, int grau, int nsteps);
 float * finterp(float * pA, int nrows, int ncols);
 float finterpH(float * pA, int nrows, int ncols);
 float finterpL(float * pA, int nrows, int ncols);
@@ -255,7 +261,8 @@ int main(int argc, const char * argv[]) {
 		& execprob19, & execprob20, & execprob21,
 		& execprob22, & execprob23, & execprob24,
 		& execprob25, & execprob26, & execprob27,
-		& execprob28, & execprob29, & execprob30
+		& execprob28, & execprob29, & execprob30,
+		& execprob31
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -320,7 +327,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 30) {
+	if (probnbr < 1 || probnbr > 31) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -980,8 +987,11 @@ void execprob23(int size) {
 	float y = finterpL(pAf, nrowA, ncolA);
 	printf("Valor: %f. Número de operações para a extrapolação de Lagrange: %lld. \n", y, flops_);
 	flops_ = 0;
-	y = fextrapR(pAf, nrowA, ncolA);
-	printf("Valor: %f. Número de operações para a extrapolação de Richardson/lagrange: %lld. \n", y, flops_);
+	y = finterpN(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a extrapolação de Neville: %lld. \n", y, flops_);
+	flops_ = 0;
+	y = finterpH(pAf, nrowA, ncolA);
+	printf("Valor: %f. Número de operações para a extrapolação de Hermite: %lld. \n", y, flops_);
 	return;
 	}
 	
@@ -1121,6 +1131,22 @@ void execprob30(int size) {
 	return;
 	}
 
+void execprob31(int size) {
+// Executa o problema número '31' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("G", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Calcula o potencial
+	flops_ = 0;
+
+
+	float L = findut((int) pAf[0], pAf[1], pAf[2], pAf[3]);	
+	printf("Indutância: %f. Número de operações para o cálculo: %lld. \n", L, flops_);
+	return;
+	}
+
 
 // Funções especiais
 float findut(int n, float h, float r, float d) {
@@ -1220,14 +1246,16 @@ void felipintS(float x, float * pek, float * pfk) {
 void felipintA(float x, float * pek, float * pfk, int grau, int nsteps) {
 	float x2 = x * x;
 	float phi = 0;
-	float step = PISOBRE2 / nsteps;	
-	float ek = 0, fk = 0, lastf, lastg;
+	float step = PISOBRE2 / nsteps;
+	float ek = 0, fk = 0;
 	#define INT_TERMS_ROWS 4
 	#define INT_TERMS_COLS 5
 	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
 		{1, 1}, {1, 1, 2}, {1, 4, 1, 3}, {3, 9, 9, 3, 8}
 		};
 	int * pterms = & terms [grau][0];
+	flops_ += 1 + 2 * FLOPS_DIV;
+	float mult = step / pterms[grau + 1];
 	float * pfval = (float *) malloc((grau + 1) * sizeof(float));
 	float * pgval = (float *) malloc((grau + 1) * sizeof(float));
 	if (pfval == NULL || pgval == NULL) {
@@ -1241,14 +1269,13 @@ void felipintA(float x, float * pek, float * pfk, int grau, int nsteps) {
 		float f = sqrt(1 - x2 * sin2phi);
 		pfval[grau] = f;
 		pgval[grau] = 1 / f;
+		flops_ += 3 + FLOPS_DIV + FLOPS_SQRT + FLOPS_SIN;
 		if (j == incr) {
-			float sumf = 0, sumg = 0;
 			for (int k = 0; k <= grau; ++ k) {
-				sumf += pterms[k] * pfval[k];
-				sumg += pterms[k] * pgval[k];
+				ek += pterms[k] * pfval[k];
+				fk += pterms[k] * pgval[k];
+				flops_ += 4;
 				}
-			ek += sumf / pterms[grau + 1];
-			fk += sumg / pterms[grau + 1];
 			j = 0;
 			}
 		for (int k = 1; k <= grau; ++ k) {
@@ -1256,9 +1283,11 @@ void felipintA(float x, float * pek, float * pfk, int grau, int nsteps) {
 			pgval[k - 1] = pgval[k];
 			}				
 		phi += step;
+		++ flops_;
 		}
-	* pfk = step * fk;
-	* pek = step * ek;
+	* pek = mult * ek;
+	* pfk = mult * fk;
+	flops_ += 2;
 	#undef INT_TERMS_ROWS
 	#undef INT_TERMS_COLS
 	}
@@ -1405,12 +1434,16 @@ float finteg(float * pmat, int nrows, int ncols, int n) {
 		}	
 	float result = h * valor / pterms[n + 1];
 	flops_ += 1 + FLOPS_DIV;
+	#undef INT_TERMS_ROWS
+	#undef INT_TERMS_COLS
 	return result;
 	}
 
-void fintegf(ffunc * fp, float xi, float xf, int grau, int nsteps) {
+float fintegf(f_func * fp, float xi, float xf, int grau, int nsteps) {
+// Calcula a integral da função 'fp' no intervalo ['xi','xf'], conforme fórmula de ordem 'grau' com 'nsteps'.
 	float result = 0, x = xi;
-	float step = (xf - xi) / nsteps;	
+	float step = (xf - xi) / nsteps;
+	flops_ += 1 + FLOPS_DIV;
 	#define INT_TERMS_ROWS 4
 	#define INT_TERMS_COLS 5
 	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
@@ -1424,24 +1457,26 @@ void fintegf(ffunc * fp, float xi, float xf, int grau, int nsteps) {
 		}
 	int incr = (grau > 1) ? grau : 1;
 	for (int i = 0, j = 0; i < nsteps; ++ i, ++ j) {
-		pfval[grau] = pf(x);
+		pfval[grau] = fp(x);
 		if (j == incr) {
-			float sumf = 0;
 			for (int k = 0; k <= grau; ++ k) {
-				sumf += pterms[k] * pfval[k];
+				result += pterms[k] * pfval[k];
+				flops_ += 2;
 				}
-			result += sumf / pterms[grau + 1];
 			j = 0;
 			}
 		for (int k = 1; k <= grau; ++ k) {
 			pfval[k - 1] = pfval[k];
 			}				
 		x += step;
+		++ flops_;
 		}
-	return result;
+	flops_ += 1 + FLOPS_DIV;
+	return result * step / pterms[grau + 1];
 	#undef INT_TERMS_ROWS
 	#undef INT_TERMS_COLS
 	}
+	
 	
 // Funções para ajuste de polinômios
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
