@@ -40,6 +40,9 @@ n = 24: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de N
 n = 25: Lê uma tabela gerada pelo MATLAB e ajusta uma curva aos dados pelo método dos mínimos quadrados.
 n = 26: Lê uma tabela gerada pelo MATLAB e calcula a derivada em cada ponto.
 n = 27: Lê uma tabela gerada pelo MATLAB e calcula a área sob a curva em um intervalo dado.
+n = 28: Lê uma tabela gerada pelo MATLAB e calcula as derivadas em cada ponto.
+n = 29: Lê uma especificação de intervalo e calcula as integrais elípticas correspondentes.
+n = 30: Lê especificação de um solenóide e calcula sua indutância.
 
 Valores de p:
 p = 0: Não usar precondicionador(default)
@@ -69,7 +72,7 @@ Códigos de retorno:
 13: A matriz não é simétrica.
 14: Divisão por zero inesperada.
 15: Grau do polinômio inválido.
-
+16: Dados do solenóide inconsistentes.
 
 Observações:
 1) Compilado e testado com MinGW 4.8.2.
@@ -103,6 +106,9 @@ TO DO:
 #define LAPACK_COMPLEX_CPP 1
 #include "lapacke.h"
 
+#define PI				3.1415926535897932384626433832795
+#define PISOBRE2		(0.5 * PI)
+
 // para leitura dos dados em arquivo
 #define bufsize 50000				
 #define FNAME_MAX_SIZE 255
@@ -121,6 +127,7 @@ void *__gxx_personality_v0;			// desabilita tratamento de exceção
 typedef enum {Progressivo, Retroativo, Central} ModoDeriv;
 
 typedef void f_exec(int);			// função a ser despachada
+typedef float f_func(float);		// função a ser calculada
 typedef int f_iter(float *, float *, float *, float *, float **, float *, float *, int *, int);
 typedef struct {
 	int rank;
@@ -145,13 +152,17 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob11, execprob12, execprob13, execprob14, execprob15,
 	execprob16, execprob17, execprob18, execprob19, execprob20,
 	execprob21, execprob22, execprob23, execprob24, execprob25, 
-	execprob26, execprob27;
+	execprob26, execprob27, execprob28, execprob29, execprob30;
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms);
 void fchangerows(float * pmat, int rows, int ncols, int row1, int row2);
 void fcompress(float * pS, float * pU, float * pV, int nrows, int ncols, float retain, float ** ppnS, float ** ppnU, float ** ppnV, fcompressdata * pstats);
 float * fderivP(float * pmat, int nrows, int ncols);
 float * fderivS(float * pmat, int nrows, int ncols, ModoDeriv modo);
+float * fderivT(float * pmat, int nrows, int ncols, int n);
 float * fdoLU(float * pB, float * pL, float * pU, int * pP, int nrows);
+void felipintA(float x, float * pek, float * pfk, int grau, int nsteps);
+void felipintAGM(float x, float * pek, float * pfk);
+void felipintS(float x, float * pek, float * pfk);
 float * feqcaracL(float * pmat, int nrows, int ncols);
 float * feqcaracLF(float * pmat, int nrows, int ncols, float * pdev = NULL, float ** ppinv = NULL);
 float fextrapR(float * pA, int nrows, int ncols);
@@ -161,6 +172,7 @@ float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
+float findut(int n, float h, float r, float d);
 float finteg(float * pmat, int nrows, int ncols, int n);
 float * finterp(float * pA, int nrows, int ncols);
 float finterpH(float * pA, int nrows, int ncols);
@@ -243,6 +255,7 @@ int main(int argc, const char * argv[]) {
 		& execprob19, & execprob20, & execprob21,
 		& execprob22, & execprob23, & execprob24,
 		& execprob25, & execprob26, & execprob27,
+		& execprob28, & execprob29, & execprob30
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -307,7 +320,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 27) {
+	if (probnbr < 1 || probnbr > 30) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -1015,14 +1028,17 @@ void execprob26(int size) {
 	printf("Número de operações para o cálculo da derivada conforme fórmula de primeira ordem: %lld. \n", flops_);
 	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
 	free(derivada);
+	flops_ = 0;
 	derivada = fderivS(pAf, nrowA, ncolA, Progressivo);
 	printf("Número de operações para o cálculo da derivada conforme fórmula progressiva de segunda ordem: %lld. \n", flops_);
 	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
 	free(derivada);
+	flops_ = 0;
 	derivada = fderivS(pAf, nrowA, ncolA, Retroativo);
 	printf("Número de operações para o cálculo da derivada conforme fórmula retroativa de segunda ordem: %lld. \n", flops_);
 	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
 	free(derivada);
+	flops_ = 0;
 	derivada = fderivS(pAf, nrowA, ncolA, Central);
 	printf("Número de operações para o cálculo da derivada conforme fórmula central de segunda ordem: %lld. \n", flops_);
 	fshowmat(derivada, nrowA - 1, 1, "Derivadas:");	
@@ -1041,11 +1057,210 @@ void execprob27(int size) {
 	// Calcula a integral por polinômios de diversas ordens
 	float result = finteg(pAf, nrowA, ncolA, 1);	
 	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de primeira ordem: %lld. \n", result, flops_);
+	flops_ = 0;
 	result = finteg(pAf, nrowA, ncolA, 2);	
 	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de segunda ordem: %lld. \n", result, flops_);
+	flops_ = 0;
 	result = finteg(pAf, nrowA, ncolA, 3);	
 	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de terceira ordem: %lld. \n", result, flops_);
 	return;
+	}
+	
+void execprob28(int size) {
+// Executa o problema número '28' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("F", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Calcula a derivada de diversas ordens
+	flops_ = 0;
+	float * derivada = fderivT(pAf, nrowA, ncolA, 2);	
+	printf("Número de operações para o cálculo da derivada segunda: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 2, 1, "Derivada segunda:");
+	free(derivada);
+	flops_ = 0;
+	derivada = fderivT(pAf, nrowA, ncolA, 3);	
+	printf("Número de operações para o cálculo da derivada terceira: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 3, 1, "Derivada terceira:");
+	free(derivada);
+	flops_ = 0;
+	derivada = fderivT(pAf, nrowA, ncolA, 4);	
+	printf("Número de operações para o cálculo da derivada quarta: %lld. \n", flops_);
+	fshowmat(derivada, nrowA - 4, 1, "Derivada quarta:");
+	free(derivada);
+	return;
+	}
+	
+void execprob29(int size) {
+// Executa o problema número '29' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("H", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Calcula as integrais
+	float ek, fk;
+	flops_ = 0;
+	felipintA(pAf[0], & ek, & fk, (int) pAf[1], (int) pAf[2]);	
+	printf("Integrais: %f e %f. Número de operações para o cálculo: %lld. \n", ek, fk, flops_);
+	return;
+	}
+
+void execprob30(int size) {
+// Executa o problema número '30' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("G", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Calcula a indutância
+	flops_ = 0;
+	float L = findut((int) pAf[0], pAf[1], pAf[2], pAf[3]);	
+	printf("Indutância: %f. Número de operações para o cálculo: %lld. \n", L, flops_);
+	return;
+	}
+
+
+// Funções especiais
+float findut(int n, float h, float r, float d) {
+// Calcula a indutância, em microhenrys, de um solenóide de 'n' espiras, comprimento 'h', raio 'r', condutores de diâmetro 'd' pela soma das indutâncias mútuas
+	#define MU0				(0.4 * PI)
+	#define MEIOEXP_025		(0.5 * exp(-0.25))
+	printf("n = %d, h = %f m, r = %f m, d = %f m \n", n, h, r, d);
+	float b1b2 = d * MEIOEXP_025;
+	float step = h / n;
+	float z2 = 0.5 * step;
+	float z2_b1b2 = z2 - b1b2;
+	float z2__b1b2 = z2 - b1b2;
+	float doisr = 2 * r, doisr2 = doisr * doisr;
+	flops_ += 6 + FLOPS_DIV;
+	float sum = 0, z1 = z2, ek, fk;
+	for (int i = 0; i < n; ++ i) {
+		float b = z1 - z2__b1b2;
+		float valor = doisr / sqrt(doisr2 + b * b);
+		flops_ += 3 + FLOPS_DIV + FLOPS_SQRT;
+		felipintA(valor, & ek, & fk, 3, 1000);
+		printf("felipintS(%f) = %f, %f \n", valor, ek, fk);
+		float doisinvvalor = 2 / valor;
+		float turn1 = - ((valor - doisinvvalor) * fk + (doisinvvalor * ek));
+		flops_ += 4 + FLOPS_DIV;
+		if (i == 0) {
+			sum = n * turn1;
+			++ flops_;
+			}
+		else {
+			float b = z1 - z2_b1b2;
+			float valor = doisr / sqrt(doisr2 + b * b);
+			flops_ += 3 + FLOPS_DIV + FLOPS_SQRT;
+			felipintA(valor, & ek, & fk, 3, 1000);
+			printf("felipintS(%f) = %f, %f \n", valor, ek, fk);
+			float doisinvvalor = 2 / valor;
+			float turn2 = - ((valor - doisinvvalor) * fk + (doisinvvalor * ek));
+			sum += (n - i) * (turn1 + turn2);
+			flops_ += 6 + FLOPS_DIV;
+			}
+		z1 += step;
+		++ flops_;
+		}
+	flops_ += 2;
+	return MU0 * r * sum;
+	#undef MU0
+	#undef MEIOEXP_025
+	}
+
+void felipintAGM(float x, float * pek, float * pfk) {
+	float a = 1;
+	float x2 = x * x;
+	float b = sqrt(1 - x2);
+	float ek = 1 - 0.5 * x2;
+	float erro = 1;
+	flops_ += 4 + FLOPS_SQRT;
+	for (int i = 1; erro > maxerr_; i *= 2) {
+		float a1 = 0.5 * (a + b);
+		float b1 = sqrt(a * b);
+		float a_b = a - b;
+		ek += i * a_b * a_b;
+		flops_ += 7 + FLOPS_SQRT;
+		a = a1;
+		b = b1;
+		erro = fabs(a_b);
+		}
+	* pfk = PISOBRE2 * a;
+	* pek = 0.5 * (* pfk) * ek;
+	flops_ += 3;	
+	}
+
+void felipintS(float x, float * pek, float * pfk) {
+	float ek, fk, valor, x2n;
+	float erroek = 1, errofk = 1;
+	int doisn, doisn_1;
+	float x2 = x * x;
+	for (int i = 0; erroek > maxerr_ && errofk > maxerr_; ++ i) {
+		if (i == 0) {
+			ek = fk = valor = x2n = 1;
+			continue;
+			}
+		doisn = 2 * i;
+		doisn_1 = doisn - 1;
+		valor *= doisn_1 / doisn;
+		x2n *= x2;
+		float valor2x2n = valor * valor * x2n;
+		errofk = valor2x2n;
+		erroek = valor2x2n / doisn_1;
+		fk += errofk;
+		ek -= erroek;
+		errofk = fabs(errofk);
+		erroek = fabs(erroek);		
+		}
+	* pfk = PISOBRE2 * fk;
+	* pek = PISOBRE2 * ek;
+	}
+
+void felipintA(float x, float * pek, float * pfk, int grau, int nsteps) {
+	float x2 = x * x;
+	float phi = 0;
+	float step = PISOBRE2 / nsteps;	
+	float ek = 0, fk = 0, lastf, lastg;
+	#define INT_TERMS_ROWS 4
+	#define INT_TERMS_COLS 5
+	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
+		{1, 1}, {1, 1, 2}, {1, 4, 1, 3}, {3, 9, 9, 3, 8}
+		};
+	int * pterms = & terms [grau][0];
+	float * pfval = (float *) malloc((grau + 1) * sizeof(float));
+	float * pgval = (float *) malloc((grau + 1) * sizeof(float));
+	if (pfval == NULL || pgval == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 2! \n", grau + 1);
+		exit(7);
+		}
+	int incr = (grau > 1) ? grau : 1;
+	for (int i = 0, j = 0; i < nsteps; ++ i, ++ j) {
+		float sinphi = sin(phi);
+		float sin2phi = sinphi * sinphi;
+		float f = sqrt(1 - x2 * sin2phi);
+		pfval[grau] = f;
+		pgval[grau] = 1 / f;
+		if (j == incr) {
+			float sumf = 0, sumg = 0;
+			for (int k = 0; k <= grau; ++ k) {
+				sumf += pterms[k] * pfval[k];
+				sumg += pterms[k] * pgval[k];
+				}
+			ek += sumf / pterms[grau + 1];
+			fk += sumg / pterms[grau + 1];
+			j = 0;
+			}
+		for (int k = 1; k <= grau; ++ k) {
+			pfval[k - 1] = pfval[k];
+			pgval[k - 1] = pgval[k];
+			}				
+		phi += step;
+		}
+	* pfk = step * fk;
+	* pek = step * ek;
+	#undef INT_TERMS_ROWS
+	#undef INT_TERMS_COLS
 	}
 	
 	
@@ -1096,7 +1311,59 @@ float * fderivS(float * pmat, int nrows, int ncols, ModoDeriv modo) {
 	return result;
 	}
 
+float * fderivT(float * pmat, int nrows, int ncols, int n) {
+// Calcula a derivada centrada de ordem 'n' em cada ponto, conforme fórmula de Taylor
+	if (n < 2 || n > 4) {
+		printf("Grau do polinômio inválido: %d", n);
+		exit(15);
+		}
+	int npoints = nrows - n;
+	float * result = (float *) malloc(npoints * sizeof(float));
+	if (result == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", npoints);
+		exit(7);
+		}
+	#define DERIV_TERMS_ROWS 3
+	#define DERIV_TERMS_COLS 5
+	static float terms[DERIV_TERMS_ROWS][DERIV_TERMS_COLS] = {
+		{1, -2, 1}, {-0.5, 1, -1, 0,5}, {1, -4, 6, -4, 1}
+		};
+	float hn = pmat[ncols] - pmat[0];
+	for (int i = 1; i < n; ++ i) {
+		hn *= hn;
+		++ flops_;
+		}
+	float invhn = 1.0 / hn;
+	flops_ += FLOPS_DIV;
+	float * pterm = & terms[n - 2][0];
+	debuglevel_ = 2;
+	for (int i = 0; i < npoints; ++ i) {
+		if (debuglevel_ >= 2) {
+			printf("r[%d] = 1 / %f * (", i, hn);
+			}
+		float valor = 0.0;
+		for (int k = 0; k <= n; ++ k) {
+			int j = i + k;
+			float parcela = pmat[j * ncols + 1];
+			valor += pterm[k] * parcela;
+			if (debuglevel_ >= 2) {
+				printf(" %f*%f ", pterm[k], parcela);
+				}
+			flops_ += 2;				
+			}
+		if (debuglevel_ >= 2) {
+			printf(") \n");
+			}	
+		result[i] = valor * invhn;
+		++ flops_;
+		}
+	debuglevel_ = 0;
+	return result;
+	#undef DERIV_TERMS_ROWS
+	#undef DERIV_TERMS_COLS
+	}
 
+	
 // Funções para integração
 float finteg(float * pmat, int nrows, int ncols, int n) {
 // Calcula a integral em cada ponto, conforme fórmula de ordem 'n'
@@ -1113,13 +1380,11 @@ float finteg(float * pmat, int nrows, int ncols, int n) {
 	int * pterms = & terms[n - 1][0];
 	float h = pmat[ncols] - pmat[0];
 	++ flops_;
-	int i = 0, j, k;
 	float valor = 0.0;
-	debuglevel_ = 2;
 	if (debuglevel_ >= 2) {
 		printf(" = %f / %d * (", h, pterms[n + 1]);
 		}
-	i = j = k = 0;
+	int i = 0, j = 0, k = 0;
 	while (i < intervals) {
 		float parcela = pmat[k * ncols + 1];
 		valor += pterms[j] * parcela;
@@ -1143,6 +1408,40 @@ float finteg(float * pmat, int nrows, int ncols, int n) {
 	return result;
 	}
 
+void fintegf(ffunc * fp, float xi, float xf, int grau, int nsteps) {
+	float result = 0, x = xi;
+	float step = (xf - xi) / nsteps;	
+	#define INT_TERMS_ROWS 4
+	#define INT_TERMS_COLS 5
+	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
+		{1, 1}, {1, 1, 2}, {1, 4, 1, 3}, {3, 9, 9, 3, 8}
+		};
+	int * pterms = & terms [grau][0];
+	float * pfval = (float *) malloc((grau + 1) * sizeof(float));
+	if (pfval == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x 1! \n", grau + 1);
+		exit(7);
+		}
+	int incr = (grau > 1) ? grau : 1;
+	for (int i = 0, j = 0; i < nsteps; ++ i, ++ j) {
+		pfval[grau] = pf(x);
+		if (j == incr) {
+			float sumf = 0;
+			for (int k = 0; k <= grau; ++ k) {
+				sumf += pterms[k] * pfval[k];
+				}
+			result += sumf / pterms[grau + 1];
+			j = 0;
+			}
+		for (int k = 1; k <= grau; ++ k) {
+			pfval[k - 1] = pfval[k];
+			}				
+		x += step;
+		}
+	return result;
+	#undef INT_TERMS_ROWS
+	#undef INT_TERMS_COLS
+	}
 	
 // Funções para ajuste de polinômios
 float * fajust(float * pmat, int nrows, int ncols, int * pnparms) {
