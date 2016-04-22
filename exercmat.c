@@ -45,8 +45,12 @@ n = 29: Lê uma especificação de intervalo e calcula as integrais elípticas c
 n = 30: Lê especificação de um solenóide e calcula sua indutância.
 n = 31: Lê uma tabela gerada pelo MATLAB e calcula o período médio.
 n = 32: Lê uma tabela gerada pelo MATLAB e ajusta uma curva aos dados pelo método dos mínimos quadrados por regressão polinomial.
-
 n = 33: Lê uma tabela gerada pelo MATLAB e calcula a integral dupla correspondente.
+
+
+n = 34: Lê um intervalo de valores e calcula a integral dupla correspondente.
+
+
 n = 33: Lê especificação de um capacitor coaxial e calcula o potencial e o campo elétrico no seu interior.
 
 Valores de e: Real positivo
@@ -173,7 +177,7 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob16, execprob17, execprob18, execprob19, execprob20,
 	execprob21, execprob22, execprob23, execprob24, execprob25, 
 	execprob26, execprob27, execprob28, execprob29, execprob30,
-	execprob31, execprob32, execprob33;
+	execprob31, execprob32, execprob33, execprob34;
 float * fajust(float * pmat, int nrows, int ncols);
 float fcalcmult(float * coef, int ncols, float * px);
 float fcalcpol(float * coef, int ncols, float x);
@@ -199,6 +203,7 @@ float findut(int n, float h, float r, float d, ModoIntegr modo, int grau, int st
 float fintegN(float * pmat, int nrows, int ncols, int n);
 float fintegGf(f_func1 * fp, float xi, float xf, int n, int nsteps);
 float fintegNf(f_func1 * fp, float xi, float xf, int grau, int nsteps);
+float finteg2Gf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int n1, int nsteps1, int n2, int nsteps2);
 float finteg2N(float * pmat, int nrows, int ncols, int n1, int n2);
 float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int grau1, int nsteps1, int grau2, int nsteps2);
 float * finterp(float * pA, int nrows, int ncols);
@@ -232,6 +237,7 @@ float * fpower (float * pmat, int nrows, int ncols);
 void fqualajust(float * pval, int nrows, int ncols, float * coef, float * pr2, float * pvar, float * pmedia);
 int fsavemat(const char * fname, float * pmat, int nrows, int ncols, bool header);
 void fshowmat(float * pmat, int nrows, int ncols, const char * header);
+float fsinx__y(float x, float y);
 float * fsolveChol(float * psrc, int rank, float * pdet = NULL);
 float * fsolveDG(float * psrc, int rank, float * pdet);
 float * fsolveG(float * psrc, int rank, float * pdet = NULL);
@@ -288,7 +294,8 @@ int main(int argc, const char * argv[]) {
 		& execprob22, & execprob23, & execprob24,
 		& execprob25, & execprob26, & execprob27,
 		& execprob28, & execprob29, & execprob30,
-		& execprob31, & execprob32, & execprob33
+		& execprob31, & execprob32, & execprob33,
+		& execprob34
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -353,7 +360,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 33) {
+	if (probnbr < 1 || probnbr > 34) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -1225,9 +1232,9 @@ void execprob33(int size) {
 	double * pAd = lermat("I", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	// Calcula a integral dupla por diversos métodos 
-	for (int i = 1; i < 4; ++ i) {
-		for (int j = 1; j < 4; ++ j) {
+	// Calcula a integral dupla pelo método de Newton-Cotes
+	for (int i = 1; i < 2; ++ i) {
+		for (int j = 1; j < 2; ++ j) {
 			flops_ = 0;
 			float result = finteg2N(pAf, nrowA, ncolA, i, j);	
 			printf("Integral: %f. Número de operações para o cálculo conforme fórmula de Newton-Cotes, graus %d e %d: %lld. \n", result, i, j, flops_);
@@ -1236,6 +1243,57 @@ void execprob33(int size) {
 	return;
 	}
 
+void execprob34(int size) {
+// Executa o problema número '34' com o tamanho 'size' indicado.
+	// Calcula uma integral dupla por diversos métodos
+	int nrows = 8, ncols = 8, niter = 1000;
+	float * pAf = (float *) malloc(nrows * ncols * sizeof(float));
+	float x1 = 0, x2 = 0, x1f = PISOBRE2, x2f = 0.5 * PISOBRE2;
+	float step1 = x1f / (nrows - 2), step2 = x2f / (ncols - 2);
+	pAf[0] = 0;
+	for (int j = 1; j < nrows; ++ j) {
+		pAf[j] = x2;
+		x2 += step2;
+		}
+	for (int i = 1; i < nrows; ++ i) {
+		x2 = 0;
+		pAf[i * ncols] = x1;
+		for (int j = 1; j < ncols; ++ j) {
+			pAf[i * ncols + j] = sin(x1 + x2);
+			x2 += step2;
+			}
+		x1 += step1;
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pAf, nrows, ncols, "Entrada");
+		}
+	float result;
+	for (int modo = 0; modo < 2; ++ modo) {
+		for (int i = 1; i < 5; ++ i) {
+			const char * modostr = ModoIntegrStr[modo];
+			for (int j = 1; j < 5; ++ j) {
+				if (modo == 0 && (j > 3 || i > 3)) {
+					continue;
+					}
+				if (modo == 0) {
+					flops_ = 0;
+					result = finteg2N(pAf, nrows, ncols, i, j);	
+					printf("Integral: %f. Número de operações para o cálculo conforme fórmula de %s, graus %d e %d: %lld. \n", result, modostr, i, j, flops_);
+					}
+				flops_ = 0;
+				if (modo == 0) {
+					result = finteg2Nf(fsinx__y, 0, PISOBRE2, 0, 0.5 * PISOBRE2, i, niter, j, niter);
+					}
+				else {
+					result = finteg2Gf(fsinx__y, 0, PISOBRE2, 0, 0.5 * PISOBRE2, i, niter, j, niter);					
+				}
+				printf("Integral: %f. Número de operações para o cálculo conforme fórmula de %s, graus %d e %d, %d iterações: %lld. \n", result, modostr, i, j, niter, flops_);
+				}
+			}
+		}
+	return;
+	}
+	
 	
 // Funções especiais
 float findut(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps) {
@@ -1373,6 +1431,10 @@ float fperiod(float * pmat, int nrows, int ncols) {
 	return 2 * (lastx - firstx) / nchanges;
 	}
 	
+float fsinx__y(float x, float y) {
+	return sin(x + y);
+	}
+	
 	
 // Funções para derivação
 float * fderivP(float * pmat, int nrows, int ncols) {
@@ -1491,6 +1553,7 @@ float fintegN(float * pmat, int nrows, int ncols, int n) {
 	float h = pmat[ncols] - pmat[0];
 	++ flops_;
 	float valor = 0.0;
+	debuglevel_ = 2;
 	if (debuglevel_ >= 2) {
 		printf(" = %f / %d * (", h, pterms[n + 1]);
 		}
@@ -1513,6 +1576,7 @@ float fintegN(float * pmat, int nrows, int ncols, int n) {
 	if (debuglevel_ >= 2) {
 		printf(") \n");
 		}	
+	debuglevel_ = 0;
 	float result = h * valor / pterms[n + 1];
 	flops_ += 1 + FLOPS_DIV;
 	#undef INT_TERMS_ROWS
@@ -1613,34 +1677,36 @@ float finteg2N(float * pmat, int nrows, int ncols, int n1, int n2) {
 	static int terms [INT_TERMS_ROWS][INT_TERMS_COLS] = {
 		{1, 1, 2}, {1, 4, 1, 3}, {3, 9, 9, 3, 8}
 		};
-	int intervals = nrows - 1;
-	if (n1 < 1 || n1 > 3 || (intervals % n1) > 0) {
+	int intervals1 = nrows - 2;
+	int intervals2 = ncols - 2;
+	if (n1 < 1 || n1 > 3 || (intervals1 % n1) > 0) {
 		printf("Grau do polinômio inválido: %d", n1);
 		exit(15);
 		}
-	if (n2 < 1 || n2 > 3 || (intervals % n2) > 0) {
+	if (n2 < 1 || n2 > 3 || (intervals2 % n2) > 0) {
 		printf("Grau do polinômio inválido: %d", n2);
 		exit(15);
 		}
 	int * pterms1 = & terms[n1 - 1][0];
 	int * pterms2 = & terms[n2 - 1][0];	
-	float h1 = pmat[ncols] - pmat[0];
-	float h2 = pmat[ncols + 1] - pmat[1];	
-	++ flops_;
+	float h1 = pmat[2 * ncols] - pmat[ncols];
+	float h2 = pmat[2] - pmat[1];	
+	flops_ += 2;
 	float valor = 0.0;
 	if (debuglevel_ >= 2) {
 		printf(" = (%f * %f / [%d * %d]) * (", h1, h2, pterms1[n1 + 1], pterms2[n2 + 1]);
 		}
 	int i = 0, j = 0, k = 0;
-	while (i < intervals) {
+	while (i < intervals1) {
+		float valor2 = 0;
 		int ii = 0, jj = 0, kk = 0;
-		while (ii < intervals) {
-			float parcela = pmat[kk * ncols + 2] * (pterms2[jj] * pterms1[j]);
-			valor += parcela;
-			if (debuglevel_ >= 2) {
-				printf(" %d*%d*%f", pterms2[jj], pterms1[j], parcela);
-				}	
+		while (ii < intervals2) {
+			float parcela = pmat[(k + 1) * ncols + kk + 1];
+			valor2 += parcela * pterms2[jj];
 			flops_ += 2;
+			if (debuglevel_ >= 2) {
+				printf(" %d*%f", pterms2[jj],  parcela);
+				}	
 			if (++ jj > n2) {
 				jj = 0;
 				ii += n2;
@@ -1649,6 +1715,11 @@ float finteg2N(float * pmat, int nrows, int ncols, int n1, int n2) {
 				++ kk;
 				}
 			}
+		if (debuglevel_ >= 2) {
+			printf(" %d*%f \n", pterms1[j], valor2);
+			}	
+		valor += valor2 * pterms1[j];
+		flops_ += 2;
 		if (++ j > n1) {
 			j = 0;
 			i += n1;
@@ -1669,7 +1740,7 @@ float finteg2N(float * pmat, int nrows, int ncols, int n1, int n2) {
 	
 float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int grau1, int nsteps1, int grau2, int nsteps2) {
 // Calcula a integral dupla da função 'fp' no intervalo [('x1i','x2i'),('x1f','x2f')], conforme fórmula de Newton-Cotes de ordem 'grau' com 'nsteps'.
-	float result = 0, x1 = x1i, x2 = x2i;
+	float result = 0, x1 = x1i, x2;
 	float step1 = (x1f - x1i) / nsteps1;
 	float step2 = (x2f - x2i) / nsteps1;
 	flops_ += 2 + 2 * FLOPS_DIV;
@@ -1689,11 +1760,13 @@ float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int gr
 	int incr1 = (grau1 > 1) ? grau1 : 1;
 	int incr2 = (grau2 > 1) ? grau2 : 1;
 	for (int i = 0, j = 0; i < nsteps1; ++ i, ++ j) {
-		for (int ii = 0, jj = 0; ii < nsteps1; ++ ii, ++ jj) {
-			pfval1[grau1] = pfval2[grau2] = fp(x1, x2);
+		x2 = x2i;
+		float result2 = 0;
+		for (int ii = 0, jj = 0; ii < nsteps2; ++ ii, ++ jj) {
+			pfval2[grau2] = fp(x1, x2);
 			if (jj == incr2) {
 				for (int k = 0; k <= grau2; ++ k) {
-					result += pterms2[k] * pfval2[k];
+					result2 += pterms2[k] * pfval2[k];
 					flops_ += 2;
 					}
 				jj = 0;
@@ -1701,7 +1774,10 @@ float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int gr
 			for (int k = 1; k <= grau2; ++ k) {
 				pfval2[k - 1] = pfval2[k];
 				}
-			}	
+			x2 += step2;
+			++ flops_;
+			}
+		pfval1[grau1] = result2;
 		if (j == incr1) {
 			for (int k = 0; k <= grau1; ++ k) {
 				result += pterms1[k] * pfval1[k];
@@ -1721,7 +1797,7 @@ float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int gr
 	#undef INT_TERMS_COLS
 	}
 	
-float fintegGf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int n1, int nsteps1, int n2, int nsteps2) {
+float finteg2Gf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int n1, int nsteps1, int n2, int nsteps2) {
 // Calcula a integral dupla da função 'fp' no intervalo [('x1i','x2i'),('x1f','x2f')] conforme fórmula de Gauss-Legendre de ordem 'n'
 	float result = 0;
 	float step1 = (x1f - x1i) / nsteps1;
@@ -1763,12 +1839,12 @@ float fintegGf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int n1,
 		x1[j] = A1 * pterms1[j];
 		++ flops_;
 		}
-	for (int j = 0; j <= n2; ++ j) {
-		x2[j] = A2 * pterms2[j];
-		++ flops_;
-		}
 	for (int i = 0; i < nsteps1; ++ i) {
 		for (int j = 0; j <= n1; ++ j) {
+			for (int jj = 0; jj <= n2; ++ jj) {
+				x2[jj] = A2 * pterms2[jj];
+				++ flops_;
+				}
 			for (int ii = 0; ii < nsteps2; ++ ii) {
 				for (int jj = 0; jj <= n2; ++ jj) {
 					float Fx = fp(x1[j], x2[jj]);
