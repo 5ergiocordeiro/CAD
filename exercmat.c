@@ -39,19 +39,22 @@ n = 23: Lê uma tabela gerada pelo MATLAB e extrapola um ponto pelo método trad
 n = 24: Lê uma tabela gerada pelo MATLAB e interpola um ponto pelo método de Neville.
 n = 25: Lê uma tabela gerada pelo MATLAB e ajusta uma curva aos dados pelo método dos mínimos quadrados por regressão linear múltipla.
 n = 26: Lê uma tabela gerada pelo MATLAB e calcula a derivada em cada ponto.
+
 n = 27: Lê uma tabela gerada pelo MATLAB e calcula a área sob a curva em um intervalo dado.
+
 n = 28: Lê uma tabela gerada pelo MATLAB e calcula as derivadas em cada ponto.
 n = 29: Lê uma especificação de intervalo e calcula as integrais elípticas correspondentes.
+
 n = 30: Lê especificação de um solenóide e calcula sua indutância.
+
 n = 31: Lê uma tabela gerada pelo MATLAB e calcula o período médio.
 n = 32: Lê uma tabela gerada pelo MATLAB e ajusta uma curva aos dados pelo método dos mínimos quadrados por regressão polinomial.
 n = 33: Lê uma tabela gerada pelo MATLAB e calcula a integral dupla correspondente.
+n = 34: Calcula a integral dupla por diversos métodos.
+n = 35: Lê especificação de um capacitor coaxial e calcula o potencial e o campo elétrico no seu interior.
+n = 36: Lê uma tabela gerada pelo MATLAB e interpola um ponto por regressão polinomial.
 
 
-n = 34: Lê um intervalo de valores e calcula a integral dupla correspondente.
-
-
-n = 33: Lê especificação de um capacitor coaxial e calcula o potencial e o campo elétrico no seu interior.
 
 Valores de e: Real positivo
 
@@ -81,6 +84,7 @@ Códigos de retorno:
 14: Divisão por zero inesperada.
 15: Grau do polinômio inválido.
 16: Dados do solenóide inconsistentes.
+17: Fórmula inválida.
 
 
 Observações:
@@ -117,6 +121,7 @@ TO DO:
 #include "lapacke.h"
 
 #define PI					3.1415926535897932384626433832795
+#define DOISPI				(2 * PI)
 #define PISOBRE2			(0.5 * PI)
 #define MAIORQUEDOISPI 		6.3
 
@@ -130,6 +135,7 @@ TO DO:
 #define FLOPS_SQRT		10
 #define FLOPS_DIV		10
 #define FLOPS_SIN		37
+#define FLOPS_LOG		15
 // defaults
 #define DEBUGLEVEL_DEF	0			// nível de debug
 #define MAXERR_DEF		1e-5		// valor de erro máximo
@@ -160,6 +166,17 @@ typedef struct {
 	bool first;
 	} ElipticData;
 
+typedef struct {
+	float r1, r2, r1r1, r2r2, r1r2, r1r1__r2r2__b2, phi1, phi2, phi1_phi2, b, b2, d, self, valor;
+	bool first;
+	} FDIndutData;
+
+typedef struct {
+	float * coef;
+	int grau;
+	bool initialized;
+	} GenPolData;
+
 	
 // Protótipos de funções
 void calcn2(float * fmat, double * dmat, long double * ldmat, int nrows, int ncols);
@@ -177,7 +194,8 @@ f_exec execprob1, execprob2, execprob3, execprob4, execprob5,
 	execprob16, execprob17, execprob18, execprob19, execprob20,
 	execprob21, execprob22, execprob23, execprob24, execprob25, 
 	execprob26, execprob27, execprob28, execprob29, execprob30,
-	execprob31, execprob32, execprob33, execprob34;
+	execprob31, execprob32, execprob33, execprob34, execprob35,
+	execprob36;
 float * fajust(float * pmat, int nrows, int ncols);
 float fcalcmult(float * coef, int ncols, float * px);
 float fcalcpol(float * coef, int ncols, float x);
@@ -197,10 +215,16 @@ int ffindmax(float * pmat, int nrows, int ncols, int pos, bool colmode, int star
 void ffromsys(float * psys, int nrows, int ncols, float ** ppA, float ** ppB);
 float * fgemm(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
 float * fgemmref(float * pA, int nrowA, int ncolA, float * pB, int nrowB, int ncolB);
+float fgenpol(float x);
 double fgetval(char ** pbuffer);
 float * fident(int rank, float val = 1);
-float findut(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps);
+float findut(int n, float h, float r, float d, int formula, ModoIntegr modo, int grau, int steps);
+float findutA(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps);
+float findutL(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps);
+float findutS(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps);
 float fintegN(float * pmat, int nrows, int ncols, int n);
+float fdindut1(float phi2);
+float fdindut2(float phi1, float phi2);
 float fintegGf(f_func1 * fp, float xi, float xf, int n, int nsteps);
 float fintegNf(f_func1 * fp, float xi, float xf, int grau, int nsteps);
 float finteg2Gf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int n1, int nsteps1, int n2, int nsteps2);
@@ -254,6 +278,8 @@ void f2LU(float * psrc, int rank, float ** ppL, float ** ppU, int ** ppP, float 
 int f2SVD(float * pA, int nrows, int ncols, float ** ppS , float ** ppU, float ** ppV);
 float * f2sys(float * psrc, float * pval, int rank);
 float * f2tri(float * psrc, int rank, int ncols, float * pdet = NULL);
+void init_fgenpol(float * pmat, int nrows, int ncols, int grau);
+void init_fdindut(float r1, float r2, float phi1, float b, float d, int nsteps);
 void ldchangerows(long double * pmat, int rows, int ncols, int row1, int row2);
 int ldfindmax(long double * pmat, int nrows, int ncols, int pos, bool colmode, int start);	
 long double * ldmcopy(double * psrc, int nrows, int ncols);
@@ -274,6 +300,9 @@ static long long int flops_;
 static float maxerr_;
 
 static ElipticData elipticdata_;
+static GenPolData genpoldata_;
+static FDIndutData fdindutdata_;
+
 
 int main(int argc, const char * argv[]) {
 // Executa o problema de acordo com os argumentos passados.
@@ -295,7 +324,7 @@ int main(int argc, const char * argv[]) {
 		& execprob25, & execprob26, & execprob27,
 		& execprob28, & execprob29, & execprob30,
 		& execprob31, & execprob32, & execprob33,
-		& execprob34
+		& execprob34, & execprob35, & execprob36,
 		};
 	fn[probnbr - 1](size);
 	return 0;
@@ -360,7 +389,7 @@ void valargs(int argc, const char * argv[], int * pprobnbr, int * psize) {
 		}
 	int probnbr = atoi(argv[1]);
 	int size = atoi(argv[2]);
-	if (probnbr < 1 || probnbr > 34) {
+	if (probnbr < 1 || probnbr > 36) {
 		printf("Número do problema inválido (%d)! \n", probnbr);
 		exit(2);
 		}
@@ -1095,20 +1124,28 @@ void execprob26(int size) {
 void execprob27(int size) {
 // Executa o problema número '27' com o tamanho 'size' indicado.
 	// Lê a tabela de pontos de entrada
-	int nrowA, ncolA, nrowB, ncolB;
+	int nrowA, ncolA;
 	double * pAd = lermat("F", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	// Calcula a integral pelo método de Newton-Cotes
-	flops_ = 0;
-	float result = fintegN(pAf, nrowA, ncolA, 1);	
-	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de Newton-Cotes de primeira ordem: %lld. \n", result, flops_);
-	flops_ = 0;
-	result = fintegN(pAf, nrowA, ncolA, 2);	
-	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de Newton-Cotes de segunda ordem: %lld. \n", result, flops_);
-	flops_ = 0;
-	result = fintegN(pAf, nrowA, ncolA, 3);	
-	printf("Integral: %f. Número de operações para o cálculo conforme fórmula de Newton-Cotes de terceira ordem: %lld. \n", result, flops_);
+	// Calcula a integral por diversos métodos
+	float xi = pAf[0], xf = pAf[(nrowA - 1) * ncolA]; 
+	int nsteps = 100;
+	for (int modo = 0; modo < 2; ++ modo) {
+		const char * modostr = ModoIntegrStr[modo];
+		for (int i = 1; i < 4; ++ i) {
+			flops_ = 0;
+			float result;
+			if (modo == 0) {
+				result = fintegN(pAf, nrowA, ncolA, i);
+				}
+			else {
+				init_fgenpol(pAf, nrowA, ncolA, 3);
+				result = fintegGf(fgenpol, xi, xf, i, nsteps);
+				}
+			printf("Integral: %f. Número de operações para o cálculo conforme fórmula de %s de ordem %d: %lld. \n", result, modostr, i, flops_);
+			}
+		}
 	return;
 	}
 	
@@ -1170,18 +1207,24 @@ void execprob30(int size) {
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
 	// Calcula a indutância por diversos métodos
+	static const char * Formula[] = {
+		"do artigo", "simplificada", "literal"
+		};
 	for (int modo = 0; modo < 2; ++ modo) {
 		const char * modostr = ModoIntegrStr[modo];
-		for (int i = 0; i < 5; ++ i) {
-			if (modo == 0 && i > 3) {
-				continue;
-				}
-			int steps = 100;
-			while (steps < 1e6) {
-				flops_ = 0;
-				float L = findut((int) pAf[0], pAf[1], pAf[2], pAf[3], (ModoIntegr) modo, i, steps);	
-				printf("Indutância: %f. Método de %s, grau %d, %d intervalos. Número de operações para o cálculo: %lld. \n", L, modostr, i, steps, flops_);            
-				steps *= 10;
+		for (int j = 0; j < 1; ++ j) {
+			const char * formstr = Formula[j];
+			for (int i = 0; i < 5; ++ i) {
+				if (modo == 0 && i > 3) {
+					continue;
+					}
+				int steps = 100;
+				while (steps < 1e6) {
+					flops_ = 0;
+					float L = findut((int) pAf[0], pAf[1], pAf[2], pAf[3], j, (ModoIntegr) modo, i, steps);	
+					printf("Indutância: %f. Fórmula %s. Método de %s, grau %d, %d intervalos. Número de operações para o cálculo: %lld. \n", L, formstr, modostr, i, steps, flops_);            
+					steps *= 10;
+					}
 				}
 			}
 		}
@@ -1209,8 +1252,8 @@ void execprob32(int size) {
 	double * pAd = lermat("E", size, & nrowA, & ncolA);
 	// Cria versões em diversas precisões
 	float * pAf = fmcopy(pAd, nrowA, ncolA);
-	flops_ = 0;
 	// Cria novas variáveis que são potências de 'x'
+	flops_ = 0;
 	int grau;
 	float * pmat = fcriapol(pAf, nrowA, ncolA, & grau);
 	fshowmat(pmat, nrowA - 1, grau + 1, "pmat");
@@ -1269,8 +1312,8 @@ void execprob34(int size) {
 		}
 	float result;
 	for (int modo = 0; modo < 2; ++ modo) {
+		const char * modostr = ModoIntegrStr[modo];
 		for (int i = 1; i < 5; ++ i) {
-			const char * modostr = ModoIntegrStr[modo];
 			for (int j = 1; j < 5; ++ j) {
 				if (modo == 0 && (j > 3 || i > 3)) {
 					continue;
@@ -1294,13 +1337,70 @@ void execprob34(int size) {
 	return;
 	}
 	
+void execprob35(int size) {
+// Executa o problema número '35' com o tamanho 'size' indicado.
+	// Lê a especificação do capacitor coaxial
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("G", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	float ri = pAf[0], re = pAf[1], Vi = pAf[2], Vf = pAf[3];
+	// Monta a tabela com os valores do potencial V(r)
+	int nrows = 101, ncols = 2;
+	float * pmat = (float *) malloc(nrows * ncols * sizeof(float));
+	float x = ri, xf = re;
+	float step = (xf - x) / (nrows - 1);
+	for (int i = 0; i < nrows; ++ i) {
+		pmat[i * ncols] = x;
+		pmat[i * ncols + 1] = (Vi * log(re/x) + Vf * log(x/ri) ) / log(re/ri);	
+		x += step;
+		}
+	if (debuglevel_ >= 2) {
+		fshowmat(pmat, nrows, ncols, "V");
+		}
+	// Calcula o campo elétrico
+	float * pE = fderivS(pmat, nrows, ncols, Central);
+	fshowmat(pE, nrows - 2, 1, "E");	
+	return;
+	}
+	
+void execprob36(int size) {
+// Executa o problema número '36' com o tamanho 'size' indicado.
+	// Lê a tabela de pontos de entrada
+	int nrowA, ncolA, nrowB, ncolB;
+	double * pAd = lermat("E", size, & nrowA, & ncolA);
+	// Cria versões em diversas precisões
+	float * pAf = fmcopy(pAd, nrowA, ncolA);
+	// Calcula o valor do ponto
+	float x = pAf[(nrowA - 1) * ncolA + 1];
+	init_fgenpol(pAf, nrowA - 1, ncolA, 3);
+	float y = fgenpol(x);
+	printf("Valor: %f. Número de operações: %lld. \n", y, flops_);
+	return;
+	}
+
 	
 // Funções especiais
-float findut(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps) {
+float findut(int n, float h, float r, float d, int formula, ModoIntegr modo, int grau, int steps) {
 // Calcula a indutância, em microhenrys, de um solenóide de 'n' espiras, comprimento 'h', raio 'r', condutores de diâmetro 'd' pela soma das indutâncias mútuas
+	switch (formula) {
+		case 0: // conforme o artigo
+			return findutA(n, h, r, d, modo, grau, steps);
+		case 1: // fórmula simplificada
+			return findutS(n, h, r, d, modo, grau, steps);
+		case 2: // fórmula literal
+			return findutL(n, h, r, d, modo, grau, steps);
+		default:
+			printf("Fórmula inválida para o cálculo! \n");
+			exit(17);
+		}
+	return 0; // Nunca
+	}
+
+float findutA(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps) {
+// Calcula a indutância, em microhenrys, de um solenóide de 'n' espiras, comprimento 'h', raio 'r', condutores de diâmetro 'd' pela soma das indutâncias mútuas, de acordo com a fórmula do artigo.
 	#define MU0				(0.4 * PI)
 	#define MEIOEXP_025		(0.5 * exp(-0.25))
-	printf("n = %d, h = %f m, r = %f m, d = %f m \n", n, h, r, d);
 	float b1b2 = d * MEIOEXP_025;
 	float step = h / n;
 	float z2 = 0.5 * step;
@@ -1336,10 +1436,64 @@ float findut(int n, float h, float r, float d, ModoIntegr modo, int grau, int st
 		z1 += step;
 		++ flops_;
 		}
-	flops_ += 2;
+	++ flops_;
 	return MU0 * r * sum;
 	#undef MU0
 	#undef MEIOEXP_025
+	}
+	
+float findutL(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps) {
+// Calcula a indutância, em microhenrys, de um solenóide de 'n' espiras, comprimento 'h', raio 'r', condutores de diâmetro 'd' pela soma das indutâncias mútuas, de acordo com a fórmula literal (integral dupla)
+	#define MU0				0.1
+	float dist = h / n;
+	flops_ += FLOPS_DIV;
+	float result = 0;
+	for (int espira1 = 0; espira1 < n; ++ espira1) {
+		for (int espira2 = 0; espira2 < n; ++ espira2) {
+			float b = (espira2 - espira1) * dist;
+			++ flops_;
+			float mutua;
+			init_fdindut(r, r, 0, b, d , steps);
+			if (modo == 0) {
+				mutua = finteg2Nf(fdindut2, 0, DOISPI, 0, DOISPI, grau, steps, grau, steps);
+				}
+			else {
+				mutua = finteg2Gf(fdindut2, 0, DOISPI, 0, DOISPI, grau, steps, grau, steps);
+				}
+			result += mutua;
+			++ flops_;
+			}
+		}
+	++ flops_;
+	return MU0 * result;
+	#undef MU0
+	}
+
+float findutS(int n, float h, float r, float d, ModoIntegr modo, int grau, int steps) {
+// Calcula a indutância, em microhenrys, de um solenóide de 'n' espiras, comprimento 'h', raio 'r', condutores de diâmetro 'd' pela soma das indutâncias mútuas, de acordo com a fórmula simplificada (integral simples)
+	#define MU0				0.1
+	float dist = h / n;
+	flops_ += FLOPS_DIV;
+	float result = 0;
+	for (int espira1 = 0; espira1 < n; ++ espira1) {
+		for (int espira2 = 0; espira2 < n; ++ espira2) {
+			float b = (espira2 - espira1) * dist;
+			++ flops_;
+			float mutua;
+			init_fdindut(r, r, 0, b, d, steps);
+			if (modo == 0) {
+				mutua = fintegGf(fdindut1, 0, DOISPI, grau, steps);
+				}
+			else {
+				mutua = fintegNf(fdindut1, 0, DOISPI, grau, steps);
+				}
+			result += mutua;
+			++ flops_;
+			}
+		}
+	++ flops_;
+	return MU0 * result;
+	#undef MU0
 	}
 
 void felipintN(float x, float * pek, float * pfk, ModoIntegr modo, int grau, int nsteps) {
@@ -1410,6 +1564,7 @@ float finvelipx(float phi) {
 	}
 	
 float fperiod(float * pmat, int nrows, int ncols) {
+// Calcula o período médio da função dada pela tabela
 	float firstx, lastx;
 	int nchanges = 0;
 	bool lastsignal = pmat[1] > 0;
@@ -1430,9 +1585,83 @@ float fperiod(float * pmat, int nrows, int ncols) {
 	flops_ += 2 + FLOPS_DIV;
 	return 2 * (lastx - firstx) / nchanges;
 	}
-	
+
 float fsinx__y(float x, float y) {
+// Calcula sin(x+y)
+	flops_ += 1 + FLOPS_SIN;
 	return sin(x + y);
+	}
+
+void init_fdindut(float r1, float r2, float phi1, float b, float d, int nsteps) {
+// Inicializa a estrutura para o cálculo de fdindut
+	bool calcr1r2 = false;
+	if (r1 != fdindutdata_ . r1) {
+		fdindutdata_ . r1 = r1;
+		fdindutdata_ . r1r1 = r1 * r1;
+		++ flops_;
+		calcr1r2 = true;
+		}
+	if (r2 != fdindutdata_ . r2) {
+		fdindutdata_ . r2 = r2;
+		fdindutdata_ . r2r2 = r2 * r2;
+		++ flops_;
+		calcr1r2 = true;
+		}
+	if (calcr1r2) {
+		fdindutdata_ . r1r2 = r1 * r2;
+		++ flops_;		
+		}
+	bool calcb2 = false;
+	if (b != fdindutdata_ . b) {
+		fdindutdata_ . b = b;
+		fdindutdata_ . b2 = b * b;
+		++ flops_ ;
+		calcb2 = true;
+		}
+	if (calcb2 || calcr1r2) {
+		fdindutdata_ . r1r1__r2r2__b2 = fdindutdata_ . r1r1 + fdindutdata_ . r2r2 + fdindutdata_ . b2;
+		flops_ += 3;	
+		}
+	if (d != fdindutdata_ . d) {
+		fdindutdata_ . d = d;
+		float l = DOISPI * r1 / nsteps;
+		fdindutdata_ . self = l * (log(l/d) - 0.75);
+		flops_ += 3 + FLOPS_DIV + FLOPS_LOG; 
+		}
+	fdindutdata_ . phi1 = phi1;
+	return;
+	}
+	
+float fdindut1(float phi2) {
+// Calcula a indutância mútua entre dois segmentos circulares de raios 'r1' e 'r2' distantes 'b' e localizados nas coordenadas polares 'phi1' e 'phi2'
+	if (phi2 == fdindutdata_ . phi1 && fdindutdata_ . b == 0) {
+		return fdindutdata_ . self;
+		}
+	float r1r2 = fdindutdata_ . r1r2;
+	float r1r1__r2r2__b2 = fdindutdata_ . r1r1__r2r2__b2;
+	float phi1_phi2 = fdindutdata_ . phi1 - phi2;
+	++ flops_ ;
+	float cosphi1_phi2 = cos(phi1_phi2);
+	flops_ += FLOPS_SIN;
+	float r1r2cosphi1_phi2 = r1r2 * cosphi1_phi2;
+	flops_ += 3 + FLOPS_DIV + FLOPS_SQRT;
+	return r1r2cosphi1_phi2 / sqrt(r1r1__r2r2__b2 - 2 * r1r2cosphi1_phi2);
+	}
+
+float fdindut2(float phi1, float phi2) {
+	if (phi2 == phi1 && fdindutdata_ . b == 0) {
+		return fdindutdata_ . self;
+		}
+	float r1r2 = fdindutdata_ . r1r2;
+	float r1r1__r2r2__b2 = fdindutdata_ . r1r1__r2r2__b2;
+	float phi1_phi2 = phi1 - phi2;
+	++ flops_ ;
+	float cosphi1_phi2 = cos(phi1_phi2);
+	flops_ += FLOPS_SIN;
+	float r1r2cosphi1_phi2 = r1r2 * cosphi1_phi2;
+	flops_ += 3 + FLOPS_DIV + FLOPS_SQRT;
+	return r1r2cosphi1_phi2 / sqrt(r1r1__r2r2__b2 - 2 * r1r2cosphi1_phi2);
+	return 0;
 	}
 	
 	
@@ -1553,7 +1782,6 @@ float fintegN(float * pmat, int nrows, int ncols, int n) {
 	float h = pmat[ncols] - pmat[0];
 	++ flops_;
 	float valor = 0.0;
-	debuglevel_ = 2;
 	if (debuglevel_ >= 2) {
 		printf(" = %f / %d * (", h, pterms[n + 1]);
 		}
@@ -1576,7 +1804,6 @@ float fintegN(float * pmat, int nrows, int ncols, int n) {
 	if (debuglevel_ >= 2) {
 		printf(") \n");
 		}	
-	debuglevel_ = 0;
 	float result = h * valor / pterms[n + 1];
 	flops_ += 1 + FLOPS_DIV;
 	#undef INT_TERMS_ROWS
@@ -1742,7 +1969,7 @@ float finteg2Nf(f_func2 * fp, float x1i, float x1f, float x2i, float x2f, int gr
 // Calcula a integral dupla da função 'fp' no intervalo [('x1i','x2i'),('x1f','x2f')], conforme fórmula de Newton-Cotes de ordem 'grau' com 'nsteps'.
 	float result = 0, x1 = x1i, x2;
 	float step1 = (x1f - x1i) / nsteps1;
-	float step2 = (x2f - x2i) / nsteps1;
+	float step2 = (x2f - x2i) / nsteps2;
 	flops_ += 2 + 2 * FLOPS_DIV;
 	#define INT_TERMS_ROWS 4
 	#define INT_TERMS_COLS 5
@@ -2280,25 +2507,55 @@ float finterpSH(float * pA, int nrows, int ncols) {
 
 // Funções para cálculo de polinômios e multinômios
 float fcalcpol(float * coef, int ncols, float x) {
-// Calcula o valor de um polinômio
-	float soma = coef[0];
-	float px = x;
-	for (int i = 1; i < ncols; ++ i) {
-		soma += coef[i] * px;
-		px *= x;
+// Calcula o valor de um polinômio pela fórmula a0 + x*(a1 + x*(a2 + x*(... (an-1 + x*an)
+	float soma = coef[ncols];
+	++ flops_;
+	for (int i = ncols; i > 0 ; -- i) {
+		soma = coef[i - 1] + x * soma;
+		flops_ += 2;
+		}
+	if (debuglevel_ >= 3) {
+		printf(" [f(%f) = %f] ", x, soma);
 		}
 	return soma;
 	}
 	
 float fcalcmult(float * coef, int ncols, float * px) {
 // Calcula o valor de um multinômio
-	float soma = coef[0];
-	for (int i = 1; i < ncols; ++ i) {
-		soma += coef[i] * px[i - 1];
+	float soma = coef[ncols];
+	for (int i = ncols; i > 0; -- i) {
+		soma = coef[i - 1] * soma;
+		flops_ += 2;
 		}
 	return soma;
 	}
 	
+float fgenpol(float x) {
+// Calcula o valor correspondente a 'x' para o polinômio corrente.
+	float y = fcalcpol(genpoldata_ . coef,  genpoldata_ . grau + 1, x);
+	return y;
+	}
+
+void init_fgenpol(float * pmat, int nrows, int ncols, int grau) {
+// Inicializa a função fgenpol.
+	float * pA = (float *) malloc((nrows + 1) * ncols * sizeof(float));
+	if (pA == NULL) {
+		printf("Não conseguiu alocar memória para a matriz %d x %1! \n", nrows + 1);
+		exit(7);
+		}	
+	for (int i = 0; i < nrows; ++ i) {
+		for (int j = 0; j < ncols; ++ j) {
+			pA[i * ncols + j] = pmat[i * ncols + j];
+			}
+		}
+	pA[nrows * ncols] = grau;
+	float * ppol = fcriapol(pA, nrows + 1, ncols, & grau);
+	float * coef = fajust(ppol, nrows, grau + 1);
+	genpoldata_ . coef = coef;
+	genpoldata_ . grau = grau;
+	genpoldata_ . initialized = true;	
+	}
+
 	
 // Funções para decomposições SVD
 int f2SVD(float * pA, int nrows, int ncols, float ** ppS , float ** ppU, float ** ppV) {
